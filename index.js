@@ -108,7 +108,8 @@ async function getAnimePoster(animeName) {
             'Kimi to Idol Precure': 'Wonderful Precure',
             'Kimi to Idol PreCure': 'Wonderful Precure',
             'Pretty Cure': 'Precure',
-            'PreCure': 'Precure'
+            'PreCure': 'Precure',
+            'Shirohiyo': 'Shiro Hiyoko'
         };
         
         // Použijeme mapování pokud existuje
@@ -125,41 +126,80 @@ async function getAnimePoster(animeName) {
         
         console.log(`Hledám poster pro: "${animeName}" -> "${searchName}"`);
         
-        const response = await axios.get(searchUrl, { timeout: 8000 });
+        // Retry logika pro rate limiting
+        let attempt = 0;
+        const maxAttempts = 3;
         
-        if (response.data && response.data.data && response.data.data.length > 0) {
-            // Pokusíme se najít nejlepší shodu
-            let bestMatch = response.data.data[0];
-            
-            // Pokud máme více výsledků, zkusíme najít lepší shodu
-            if (response.data.data.length > 1) {
-                for (const anime of response.data.data) {
-                    const title = anime.title?.toLowerCase() || '';
-                    const searchLower = searchName.toLowerCase();
+        while (attempt < maxAttempts) {
+            try {
+                // Náhodné zpoždění 1-3 sekundy pro vyhnutí se rate limitu
+                if (attempt > 0) {
+                    const delay = Math.random() * 2000 + 1000; // 1-3 sekund
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    console.log(`Pokus ${attempt + 1}/3 pro "${animeName}" po ${Math.round(delay)}ms`);
+                }
+                
+                const response = await axios.get(searchUrl, { 
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'SubsPlease-Stremio-Addon/1.0'
+                    }
+                });
+                
+                if (response.data && response.data.data && response.data.data.length > 0) {
+                    // Pokusíme se najít nejlepší shodu
+                    let bestMatch = response.data.data[0];
                     
-                    // Přesná shoda má přednost
-                    if (title.includes(searchLower) || searchLower.includes(title)) {
-                        bestMatch = anime;
-                        break;
+                    // Pokud máme více výsledků, zkusíme najít lepší shodu
+                    if (response.data.data.length > 1) {
+                        for (const anime of response.data.data) {
+                            const title = anime.title?.toLowerCase() || '';
+                            const searchLower = searchName.toLowerCase();
+                            
+                            // Přesná shoda má přednost
+                            if (title.includes(searchLower) || searchLower.includes(title)) {
+                                bestMatch = anime;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    const images = bestMatch.images?.jpg;
+                    const posterUrl = images?.large_image_url || images?.image_url;
+                    
+                    if (posterUrl) {
+                        console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
+                        return {
+                            poster: posterUrl,
+                            background: posterUrl
+                        };
                     }
                 }
-            }
-            
-            const images = bestMatch.images?.jpg;
-            const posterUrl = images?.large_image_url || images?.image_url;
-            
-            if (posterUrl) {
-                console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
-                return {
-                    poster: posterUrl,
-                    background: posterUrl
-                };
+                
+                break; // Úspěšný požadavek, ale žádný výsledek
+                
+            } catch (error) {
+                attempt++;
+                
+                if (error.response?.status === 429) {
+                    console.log(`⏳ Rate limit pro "${animeName}", pokus ${attempt}/${maxAttempts}`);
+                    
+                    if (attempt >= maxAttempts) {
+                        console.log(`❌ Max pokusy vyčerpány pro "${animeName}"`);
+                        break;
+                    }
+                    // Pokračujeme s dalším pokusem
+                    continue;
+                } else {
+                    console.log(`❌ Chyba při hledání posteru pro "${animeName}":`, error.message);
+                    break;
+                }
             }
         }
         
         console.log(`⚠️ Poster nenalezen pro "${animeName}", používám fallback`);
     } catch (error) {
-        console.log(`❌ Chyba při hledání posteru pro "${animeName}":`, error.message);
+        console.log(`❌ Obecná chyba pro "${animeName}":`, error.message);
     }
     
     // Fallback poster
@@ -235,16 +275,25 @@ async function getTodayAnime() {
         
         const animeList = Array.from(animeMap.values());
 
-        const animeWithPosters = await Promise.all(
-            animeList.map(async (anime) => {
-                const images = await getAnimePoster(anime.name);
-                return {
-                    ...anime,
-                    poster: images.poster,
-                    background: images.background
-                };
-            })
-        );
+        const animeWithPosters = [];
+        
+        // Načteme postery postupně s malým zpožděním
+        for (let i = 0; i < animeList.length; i++) {
+            const anime = animeList[i];
+            
+            // Malé zpoždění mezi požadavky (200-500ms)
+            if (i > 0) {
+                const delay = Math.random() * 300 + 200;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+            
+            const images = await getAnimePoster(anime.name);
+            animeWithPosters.push({
+                ...anime,
+                poster: images.poster,
+                background: images.background
+            });
+        }
 
         animeCache.data = animeWithPosters;
         animeCache.timestamp = now;
