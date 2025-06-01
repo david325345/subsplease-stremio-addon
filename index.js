@@ -261,8 +261,11 @@ async function getSubsPleaseAnime() {
                 console.log(`📡 Načítám ${rss.quality} z ${rss.url}`);
                 
                 const response = await axios.get(rss.url, {
-                    timeout: 10000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+                    timeout: 15000,
+                    headers: { 
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/rss+xml, application/xml, text/xml'
+                    }
                 });
                 
                 const $ = cheerio.load(response.data, { xmlMode: true });
@@ -275,11 +278,16 @@ async function getSubsPleaseAnime() {
                     const link = $(element).find('link').text().trim();
                     const pubDate = $(element).find('pubDate').text().trim();
                     
+                    if (!title || !link) {
+                        console.log(`⚠️ Chybí title nebo link pro item ${index}`);
+                        return;
+                    }
+                    
                     const releaseDate = new Date(pubDate);
                     const isToday = releaseDate.toDateString() === today.toDateString();
                     
                     // Debug každý item
-                    if (index < 5) { // Ukažeme prvních 5 pro debug
+                    if (index < 5) {
                         console.log(`📺 Item ${index}: "${title}" | Datum: ${releaseDate.toDateString()} | Dnes: ${isToday}`);
                     }
                     
@@ -299,13 +307,14 @@ async function getSubsPleaseAnime() {
                                     name: animeName,
                                     episode: episode,
                                     fullTitle: title,
-                                    poster: null,
-                                    background: null,
+                                    poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Loading...', // Fallback poster
+                                    background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Loading...',
                                     releaseInfo: releaseDate.toLocaleDateString('cs-CZ'),
                                     type: 'series',
                                     pubDate: pubDate,
                                     source: 'SubsPlease',
-                                    qualities: new Map()
+                                    qualities: new Map(),
+                                    hasValidData: true // Flag pro validní data
                                 });
                             }
                             
@@ -320,16 +329,70 @@ async function getSubsPleaseAnime() {
                 
             } catch (error) {
                 console.log(`❌ Chyba při načítání SubsPlease ${rss.quality}:`, error.message);
+                
+                // Fallback - pokud se nepodaří načíst RSS, vytvoříme demo data
+                if (rss.quality === '1080p') {
+                    console.log('🔄 Vytvářím demo SubsPlease data...');
+                    animeMap.set('demo-subsplease', {
+                        id: `subsplease:${Buffer.from('demo-subsplease').toString('base64')}`,
+                        name: 'Demo SubsPlease Anime',
+                        episode: '1',
+                        fullTitle: '[SubsPlease] Demo Anime - 01 (1080p)',
+                        poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=SubsPlease+Demo',
+                        background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=SubsPlease+Demo',
+                        releaseInfo: today.toLocaleDateString('cs-CZ'),
+                        type: 'series',
+                        pubDate: today.toISOString(),
+                        source: 'SubsPlease',
+                        qualities: new Map([['1080p', 'https://example.com/demo.torrent']]),
+                        hasValidData: true
+                    });
+                }
             }
         }
         
-        const result = Array.from(animeMap.values());
+        const result = Array.from(animeMap.values()).filter(anime => anime.hasValidData);
         console.log(`🍜 SubsPlease výsledek: ${result.length} anime`);
+        
+        // Pokud nemáme žádná data, vytvoříme alespoň jedno demo
+        if (result.length === 0) {
+            console.log('⚠️ Žádná SubsPlease data, vytvářím fallback...');
+            result.push({
+                id: `subsplease:${Buffer.from('fallback-subsplease').toString('base64')}`,
+                name: 'SubsPlease (Temporarily Unavailable)',
+                episode: '1',
+                fullTitle: '[SubsPlease] Service Temporarily Unavailable',
+                poster: 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=SubsPlease+Unavailable',
+                background: 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=SubsPlease+Unavailable',
+                releaseInfo: today.toLocaleDateString('cs-CZ'),
+                type: 'series',
+                pubDate: today.toISOString(),
+                source: 'SubsPlease',
+                qualities: new Map([['1080p', 'https://subsplease.org']]),
+                hasValidData: true
+            });
+        }
+        
         return result;
         
     } catch (error) {
         console.log('❌ SubsPlease obecná chyba:', error.message);
-        return [];
+        
+        // Fallback při úplném selhání
+        return [{
+            id: `subsplease:${Buffer.from('error-subsplease').toString('base64')}`,
+            name: 'SubsPlease Error',
+            episode: '1',
+            fullTitle: '[SubsPlease] Connection Error',
+            poster: 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=Connection+Error',
+            background: 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=Connection+Error',
+            releaseInfo: new Date().toLocaleDateString('cs-CZ'),
+            type: 'series',
+            pubDate: new Date().toISOString(),
+            source: 'SubsPlease',
+            qualities: new Map([['1080p', 'https://subsplease.org']]),
+            hasValidData: true
+        }];
     }
 }
 
@@ -346,8 +409,11 @@ async function getEraiRawsAnime() {
         console.log(`📡 Načítám z ${rssUrl}`);
         
         const response = await axios.get(rssUrl, {
-            timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            timeout: 15000,
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/rss+xml, application/xml, text/xml'
+            }
         });
         
         const $ = cheerio.load(response.data, { xmlMode: true });
@@ -364,11 +430,16 @@ async function getEraiRawsAnime() {
             const link = $(element).find('link').text().trim();
             const pubDate = $(element).find('pubDate').text().trim();
             
+            if (!title || !link) {
+                console.log(`⚠️ Chybí title nebo link pro Erai-raws item ${index}`);
+                return;
+            }
+            
             const releaseDate = new Date(pubDate);
             const isToday = releaseDate.toDateString() === today.toDateString();
             
             // Debug každý item
-            if (index < 5) { // Ukažeme prvních 5 pro debug
+            if (index < 5) {
                 console.log(`📺 Item ${index}: "${title}" | Datum: ${releaseDate.toDateString()} | Dnes: ${isToday}`);
             }
             
@@ -399,13 +470,14 @@ async function getEraiRawsAnime() {
                             name: animeName,
                             episode: episode,
                             fullTitle: title,
-                            poster: null,
-                            background: null,
+                            poster: 'https://via.placeholder.com/300x400/764ba2/ffffff?text=Loading...', // Fallback poster
+                            background: 'https://via.placeholder.com/1920x1080/764ba2/ffffff?text=Loading...',
                             releaseInfo: releaseDate.toLocaleDateString('cs-CZ'),
                             type: 'series',
                             pubDate: pubDate,
                             source: 'Erai-raws',
-                            qualities: new Map([['1080p', link]])
+                            qualities: new Map([['1080p', link]]),
+                            hasValidData: true // Flag pro validní data
                         });
                     }
                 } else {
@@ -416,21 +488,59 @@ async function getEraiRawsAnime() {
         
         console.log(`📊 Erai-raws: ${itemCount} celkem, ${todayCount} dnes`);
         
-        const result = Array.from(animeMap.values());
+        const result = Array.from(animeMap.values()).filter(anime => anime.hasValidData);
         console.log(`🦄 Erai-raws výsledek: ${result.length} anime`);
+        
+        // Pokud nemáme žádná data, vytvoříme alespoň jedno demo
+        if (result.length === 0) {
+            console.log('⚠️ Žádná Erai-raws data, vytvářím fallback...');
+            result.push({
+                id: `erairaws:${Buffer.from('fallback-erairaws').toString('base64')}`,
+                name: 'Erai-raws (Temporarily Unavailable)',
+                episode: '1',
+                fullTitle: '[Erai-raws] Service Temporarily Unavailable',
+                poster: 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=Erai-raws+Unavailable',
+                background: 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=Erai-raws+Unavailable',
+                releaseInfo: today.toLocaleDateString('cs-CZ'),
+                type: 'series',
+                pubDate: today.toISOString(),
+                source: 'Erai-raws',
+                qualities: new Map([['1080p', 'https://erai-raws.info']]),
+                hasValidData: true
+            });
+        }
+        
         return result;
         
     } catch (error) {
         console.log('❌ Erai-raws chyba:', error.message);
-        return [];
+        
+        // Fallback při úplném selhání
+        return [{
+            id: `erairaws:${Buffer.from('error-erairaws').toString('base64')}`,
+            name: 'Erai-raws Error',
+            episode: '1',
+            fullTitle: '[Erai-raws] Connection Error',
+            poster: 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=Connection+Error',
+            background: 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=Connection+Error',
+            releaseInfo: new Date().toLocaleDateString('cs-CZ'),
+            type: 'series',
+            pubDate: new Date().toISOString(),
+            source: 'Erai-raws',
+            qualities: new Map([['1080p', 'https://erai-raws.info']]),
+            hasValidData: true
+        }];
     }
 }
 
 async function getTodayAnime() {
     const now = Date.now();
     if (animeCache.data.length > 0 && (now - animeCache.timestamp) < animeCache.ttl) {
+        console.log(`📦 Používám cache data (${animeCache.data.length} anime)`);
         return animeCache.data;
     }
+    
+    console.log('🔄 Načítám fresh data...');
     
     try {
         // Načteme anime z obou zdrojů paralelně
@@ -442,9 +552,11 @@ async function getTodayAnime() {
         // Spojíme všechna anime
         const allAnime = [...subsPleaseAnime, ...eraiRawsAnime];
         
-        console.log(`Načteno ${subsPleaseAnime.length} anime z SubsPlease, ${eraiRawsAnime.length} z Erai-raws`);
+        console.log(`📊 Načteno ${subsPleaseAnime.length} anime z SubsPlease, ${eraiRawsAnime.length} z Erai-raws`);
         
+        // Vždy vrátíme nějaká data, i když jsou to fallback data
         if (allAnime.length === 0) {
+            console.log('⚠️ Žádná data z žádného zdroje, vytvářím demo data...');
             return [{
                 id: 'demo:' + Buffer.from('Demo Anime-1').toString('base64'),
                 name: 'Demo Anime',
@@ -471,7 +583,19 @@ async function getTodayAnime() {
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
             
-            const images = await getAnimePoster(anime.name);
+            // Pokud už má fallback poster, načteme lepší
+            let images;
+            if (anime.poster && anime.poster.includes('placeholder')) {
+                console.log(`🖼️ Načítám poster pro: ${anime.name}`);
+                images = await getAnimePoster(anime.name);
+            } else {
+                // Už má poster nebo je to demo
+                images = {
+                    poster: anime.poster || 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Anime',
+                    background: anime.background || 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Anime'
+                };
+            }
+            
             animeWithPosters.push({
                 ...anime,
                 poster: images.poster,
@@ -481,11 +605,26 @@ async function getTodayAnime() {
 
         animeCache.data = animeWithPosters;
         animeCache.timestamp = now;
+        
+        console.log(`✅ Cache aktualizována s ${animeWithPosters.length} anime`);
         return animeWithPosters;
         
     } catch (error) {
-        console.log('Chyba při načítání anime:', error.message);
-        return [];
+        console.log('❌ Chyba při načítání anime:', error.message);
+        
+        // Pokud se nepodaří načíst nic, vrátíme alespoň error data
+        return [{
+            id: 'error:' + Buffer.from('Error-1').toString('base64'),
+            name: 'Service Temporarily Unavailable',
+            episode: '1',
+            fullTitle: '[Error] Service Temporarily Unavailable',
+            poster: 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=Service+Error',
+            background: 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=Service+Error',
+            releaseInfo: 'Error',
+            type: 'series',
+            source: 'Error',
+            qualities: new Map([['1080p', 'https://subsplease.org']])
+        }];
     }
 }
 
@@ -714,20 +853,23 @@ app.get('/', (req, res) => {
         <div class="features">
             <h3>📺 Funkce addonu</h3>
             <ul>
+                <li>Dva separátní katalogy pro každý zdroj</li>
                 <li>Zobrazuje pouze anime vydané dnes</li>
-                <li>Kombinuje SubsPlease a Erai-raws zdroje</li>
+                <li>SubsPlease: 1080p + 720p kvalita z nyaa.si</li>
+                <li>Erai-raws: 1080p kvalita s více titulky</li>
                 <li>Automatické načítání posterů z MyAnimeList API</li>
                 <li>Kontrola nových anime každých 14 minut</li>
                 <li>RealDebrid streaming s přímými linky</li>
-                <li>Podpora pro 1080p a 720p rozlišení</li>
                 <li>Webové ovládání zdrojů</li>
+                <li>Keep-alive systém pro Render.com</li>
             </ul>
         </div>
 
         <div class="keepalive-info">
             🏓 <strong>Keep-Alive systém aktivní</strong><br>
             Server se automaticky pinguje každých 10 minut, aby se na Render.com neuspal<br>
-            📊 <strong>Aktuální stav:</strong> SubsPlease=${sourceConfig.subsplease ? 'ZAP' : 'VYP'}, Erai-raws=${sourceConfig.erairaws ? 'ZAP' : 'VYP'}
+            📊 <strong>Aktuální stav:</strong> SubsPlease=${sourceConfig.subsplease ? 'ZAP' : 'VYP'}, Erai-raws=${sourceConfig.erairaws ? 'ZAP' : 'VYP'}<br>
+            🔄 <strong>Verze:</strong> 1.0.0 Production Ready
         </div>
     </div>
 
