@@ -9,6 +9,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// Základní konfigurace
 const ADDON_CONFIG = {
     id: 'org.subsplease.stremio',
     version: '1.0.0',
@@ -27,6 +28,7 @@ const ADDON_CONFIG = {
 
 let animeCache = { data: [], timestamp: 0, ttl: 14 * 60 * 1000 };
 
+// Pomocné funkce
 async function addMagnetToRealDebrid(magnetUrl, apiKey) {
     const response = await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', 
         `magnet=${encodeURIComponent(magnetUrl)}`,
@@ -60,42 +62,7 @@ async function getRealDebridStreamUrl(torrentId, apiKey, maxRetries = 5) {
                     }
                 );
                 
-                if (streams.length === 0) {
-                    streams.push({
-                        name: '⚠️ Není k dispozici',
-                        title: 'Stream není momentálně dostupný',
-                        url: 'https://subsplease.org'
-                    });
-                }
-
-                res.json({ streams });
-            } else {
-                res.json({ streams: [{ name: '❌ Anime nenalezeno', url: 'https://subsplease.org' }] });
-            }
-        } else {
-            res.json({ streams: [] });
-        }
-    } catch (error) {
-        res.status(500).json({ 
-            streams: [{ name: '❌ Chyba', url: 'https://subsplease.org' }]
-        });
-    }
-});
-
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        cacheSize: animeCache.data.length,
-        cacheAge: Date.now() - animeCache.timestamp
-    });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
-    console.log(`⏰ Cache interval: 14 minut`);
-    console.log(`🌍 Veřejně dostupný addon s osobními API klíči`);
-});unrestrict.data && unrestrict.data.download) {
+                if (unrestrict.data && unrestrict.data.download) {
                     return unrestrict.data.download;
                 }
             } else if (torrentInfo.data.status === 'waiting_files_selection') {
@@ -142,11 +109,7 @@ async function getAnimePoster(animeName) {
         };
         
         let searchName = specialMappings[animeName] || animeName;
-        
-        searchName = searchName
-            .replace(/[^\w\s]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+        searchName = searchName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
         
         const searchQuery = encodeURIComponent(searchName);
         const searchUrl = `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=3`;
@@ -163,9 +126,7 @@ async function getAnimePoster(animeName) {
                 
                 const response = await axios.get(searchUrl, { 
                     timeout: 10000,
-                    headers: {
-                        'User-Agent': 'SubsPlease-Stremio-Addon/1.0'
-                    }
+                    headers: { 'User-Agent': 'SubsPlease-Stremio-Addon/1.0' }
                 });
                 
                 if (response.data && response.data.data && response.data.data.length > 0) {
@@ -193,12 +154,9 @@ async function getAnimePoster(animeName) {
                         };
                     }
                 }
-                
                 break;
-                
             } catch (error) {
                 attempt++;
-                
                 if (error.response?.status === 429) {
                     if (attempt >= maxAttempts) break;
                     continue;
@@ -208,7 +166,7 @@ async function getAnimePoster(animeName) {
             }
         }
     } catch (error) {
-        // Fallback
+        // Fallback na chybu
     }
     
     return {
@@ -282,7 +240,6 @@ async function getTodayAnime() {
         }
         
         const animeList = Array.from(animeMap.values());
-
         const animeWithPosters = [];
         
         for (let i = 0; i < animeList.length; i++) {
@@ -315,7 +272,6 @@ async function getTodayAnime() {
             background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
             releaseInfo: 'Demo',
             type: 'series',
-            link: 'https://subsplease.org/',
             qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
         }];
     }
@@ -548,7 +504,6 @@ app.get('/', (req, res) => {
             
             statusDiv.innerHTML = '<div class="alert alert-info">🔄 Ověřuji API klíč...</div>';
             
-            // Ověříme API klíč
             fetch('https://api.real-debrid.com/rest/1.0/user', {
                 headers: { 'Authorization': 'Bearer ' + apiKey }
             })
@@ -559,12 +514,10 @@ app.get('/', (req, res) => {
             .then(data => {
                 statusDiv.innerHTML = '<div class="alert alert-success">✅ API klíč ověřen! Uživatel: ' + data.username + '</div>';
                 
-                // Vygenerujeme osobní URL s API klíčem jako query parametr
-                const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json?apiKey=' + btoa(apiKey);
+                const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json';
                 document.getElementById('manifestUrl').textContent = personalManifestUrl;
                 document.getElementById('personalUrl').style.display = 'block';
                 
-                // Uložíme do URL
                 window.generatedManifestUrl = personalManifestUrl;
             })
             .catch(err => {
@@ -579,44 +532,31 @@ app.get('/', (req, res) => {
             }
         }
 
-        // Auto-focus na input
         document.getElementById('apiKey').focus();
     </script>
 </body>
 </html>`);
 });
 
-// Upravená konfigurace pro dynamické URL
-function getAddonConfig(encodedApiKey) {
-    return {
-        id: 'org.subsplease.stremio.' + encodedApiKey.substring(0, 8),
-        version: '1.0.0',
-        name: 'SubsPlease Airtime Today',
-        description: 'Anime vydané dnes z SubsPlease s automatickými postery',
-        logo: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo.png',
-        background: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo-banner.png',
-        resources: ['catalog', 'meta', 'stream'],
-        types: ['series'],
-        catalogs: [{
-            type: 'series',
-            id: 'subsplease_today',
-            name: 'Airtime Today',
-            extra: [{ name: 'apiKey', options: [encodedApiKey] }]
-        }]
-    };
-}
-
 app.get('/manifest/:encodedApiKey.json', (req, res) => {
     try {
         const encodedApiKey = req.params.encodedApiKey;
         const apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
         
-        // Jednoduchá validace API klíče
         if (!apiKey || apiKey.length < 20) {
             return res.status(400).json({ error: 'Neplatný API klíč' });
         }
         
-        res.json(getAddonConfig(encodedApiKey));
+        const configWithApiKey = {
+            ...ADDON_CONFIG,
+            id: ADDON_CONFIG.id + '.' + encodedApiKey.substring(0, 8),
+            catalogs: ADDON_CONFIG.catalogs.map(catalog => ({
+                ...catalog,
+                extra: [{ name: 'apiKey', options: [encodedApiKey] }]
+            }))
+        };
+        
+        res.json(configWithApiKey);
     } catch (error) {
         res.status(400).json({ error: 'Chyba při dekódování API klíče' });
     }
@@ -626,6 +566,7 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
+            const encodedApiKey = req.query.apiKey || '';
             
             const metas = animeList.map(anime => ({
                 id: anime.id,
@@ -652,11 +593,10 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
     }
 });
 
-app.get('/meta/:type/:id/:encodedApiKey.json', async (req, res) => {
+app.get('/meta/:type/:id.json', async (req, res) => {
     try {
-        const fullId = req.params.id;
-        const encodedApiKey = req.params.encodedApiKey;
-        const animeId = fullId.replace(':' + encodedApiKey, '');
+        const animeId = req.params.id;
+        const encodedApiKey = req.query.apiKey || '';
         
         if (animeId.startsWith('subsplease:')) {
             const animeList = await getTodayAnime();
@@ -665,7 +605,7 @@ app.get('/meta/:type/:id/:encodedApiKey.json', async (req, res) => {
             if (anime) {
                 res.json({
                     meta: {
-                        id: anime.id + ':' + encodedApiKey,
+                        id: anime.id,
                         type: 'series',
                         name: anime.name,
                         poster: anime.poster,
@@ -676,7 +616,7 @@ app.get('/meta/:type/:id/:encodedApiKey.json', async (req, res) => {
                         imdbRating: 8.0,
                         genres: ['Anime'],
                         videos: [{
-                            id: `${anime.id}:1:${anime.episode}:${encodedApiKey}`,
+                            id: `${anime.id}:1:${anime.episode}`,
                             title: `Epizoda ${anime.episode}`,
                             season: 1,
                             episode: parseInt(anime.episode),
@@ -697,14 +637,36 @@ app.get('/meta/:type/:id/:encodedApiKey.json', async (req, res) => {
     }
 });
 
-app.get('/stream/:type/:id/:encodedApiKey.json', async (req, res) => {
+app.get('/stream/:type/:id.json', async (req, res) => {
     try {
         const videoId = req.params.id;
-        const encodedApiKey = req.params.encodedApiKey;
-        const apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
+        const encodedApiKey = req.query.apiKey;
+        
+        if (!encodedApiKey) {
+            return res.json({ 
+                streams: [{ 
+                    name: '🔑 API klíč chybí', 
+                    title: 'Vraťte se na hlavní stránku a vygenerujte novou URL',
+                    url: req.protocol + '://' + req.get('host')
+                }] 
+            });
+        }
+        
+        let apiKey;
+        try {
+            apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
+        } catch (error) {
+            return res.json({ 
+                streams: [{ 
+                    name: '🔑 Neplatný API klíč', 
+                    title: 'Chyba při dekódování API klíče',
+                    url: req.protocol + '://' + req.get('host')
+                }] 
+            });
+        }
         
         const parts = videoId.split(':');
-        const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId.replace(':' + encodedApiKey, '');
+        const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId;
         
         if (animeId.startsWith('subsplease:')) {
             const animeList = await getTodayAnime();
@@ -768,4 +730,39 @@ app.get('/stream/:type/:id/:encodedApiKey.json', async (req, res) => {
                     }
                 }
 
-                if (
+                if (streams.length === 0) {
+                    streams.push({
+                        name: '⚠️ Není k dispozici',
+                        title: 'Stream není momentálně dostupný',
+                        url: 'https://subsplease.org'
+                    });
+                }
+
+                res.json({ streams });
+            } else {
+                res.json({ streams: [{ name: '❌ Anime nenalezeno', url: 'https://subsplease.org' }] });
+            }
+        } else {
+            res.json({ streams: [] });
+        }
+    } catch (error) {
+        res.status(500).json({ 
+            streams: [{ name: '❌ Chyba', url: 'https://subsplease.org' }]
+        });
+    }
+});
+
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        cacheSize: animeCache.data.length,
+        cacheAge: Date.now() - animeCache.timestamp
+    });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
+    console.log(`⏰ Cache interval: 14 minut`);
+    console.log(`🌍 Veřejně dostupný addon s osobními API klíči`);
+});
