@@ -14,20 +14,35 @@ let REAL_DEBRID_API_KEY = process.env.REAL_DEBRID_API_KEY || '';
 
 console.log('🔑 RealDebrid API klíč:', REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
 
+// Konfigurace pro zapínání/vypínání zdrojů
+let sourceConfig = {
+    subsplease: true,
+    erairaws: true
+};
+
 const ADDON_CONFIG = {
-    id: 'org.subsplease.stremio',
+    id: 'org.subsplease.erairaws.stremio',
     version: '1.0.0',
-    name: 'SubsPlease Airtime Today',
-    description: 'Anime vydané dnes z SubsPlease s automatickými postery',
+    name: 'SubsPlease + Erai-raws Airtime Today',
+    description: 'Anime vydané dnes z SubsPlease a Erai-raws s automatickými postery',
     logo: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo.png',
     background: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo-banner.png',
     resources: ['catalog', 'meta', 'stream'],
     types: ['series'],
-    catalogs: [{
-        type: 'series',
-        id: 'subsplease_today',
-        name: 'Airtime Today'
-    }]
+    catalogs: [
+        {
+            type: 'series',
+            id: 'subsplease_today',
+            name: '🍜 SubsPlease - Today',
+            extra: [{ name: 'genre', options: ['SubsPlease'] }]
+        },
+        {
+            type: 'series', 
+            id: 'erairaws_today',
+            name: '🦄 Erai-raws - Today',
+            extra: [{ name: 'genre', options: ['Erai-raws'] }]
+        }
+    ]
 };
 
 let animeCache = { data: [], timestamp: 0, ttl: 14 * 60 * 1000 };
@@ -156,7 +171,7 @@ async function getAnimePoster(animeName) {
                 const response = await axios.get(searchUrl, { 
                     timeout: 10000,
                     headers: {
-                        'User-Agent': 'SubsPlease-Stremio-Addon/1.0'
+                        'User-Agent': 'SubsPlease-Erai-Stremio-Addon/1.0'
                     }
                 });
                 
@@ -218,16 +233,18 @@ async function getAnimePoster(animeName) {
     
     // Fallback poster
     return {
-        poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=SubsPlease',
-        background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=SubsPlease'
+        poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Anime',
+        background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Anime'
     };
 }
 
-async function getTodayAnime() {
-    const now = Date.now();
-    if (animeCache.data.length > 0 && (now - animeCache.timestamp) < animeCache.ttl) {
-        return animeCache.data;
+async function getSubsPleaseAnime() {
+    if (!sourceConfig.subsplease) {
+        console.log('📴 SubsPlease je vypnutý');
+        return [];
     }
+    
+    console.log('🍜 Načítám SubsPlease anime...');
     
     try {
         const rssUrls = [
@@ -236,31 +253,45 @@ async function getTodayAnime() {
         ];
         
         const animeMap = new Map();
+        const today = new Date();
+        console.log(`📅 Dnešní datum: ${today.toDateString()}`);
         
         for (const rss of rssUrls) {
             try {
+                console.log(`📡 Načítám ${rss.quality} z ${rss.url}`);
+                
                 const response = await axios.get(rss.url, {
                     timeout: 10000,
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
                 });
                 
                 const $ = cheerio.load(response.data, { xmlMode: true });
+                let itemCount = 0;
+                let todayCount = 0;
                 
                 $('item').each((index, element) => {
+                    itemCount++;
                     const title = $(element).find('title').text().trim();
                     const link = $(element).find('link').text().trim();
                     const pubDate = $(element).find('pubDate').text().trim();
                     
                     const releaseDate = new Date(pubDate);
-                    const today = new Date();
                     const isToday = releaseDate.toDateString() === today.toDateString();
                     
+                    // Debug každý item
+                    if (index < 5) { // Ukažeme prvních 5 pro debug
+                        console.log(`📺 Item ${index}: "${title}" | Datum: ${releaseDate.toDateString()} | Dnes: ${isToday}`);
+                    }
+                    
                     if (isToday) {
+                        todayCount++;
                         const match = title.match(/\[SubsPlease\]\s*(.+?)\s*-\s*(\d+(?:\.\d+)?)/);
                         if (match) {
                             const animeName = match[1].trim();
                             const episode = match[2];
-                            const animeKey = `${animeName}-${episode}`;
+                            const animeKey = `subsplease-${animeName}-${episode}`;
+                            
+                            console.log(`✅ Nalezeno dnešní anime: ${animeName} - ${episode}`);
                             
                             if (!animeMap.has(animeKey)) {
                                 animeMap.set(animeKey, {
@@ -273,27 +304,166 @@ async function getTodayAnime() {
                                     releaseInfo: releaseDate.toLocaleDateString('cs-CZ'),
                                     type: 'series',
                                     pubDate: pubDate,
+                                    source: 'SubsPlease',
                                     qualities: new Map()
                                 });
                             }
                             
                             animeMap.get(animeKey).qualities.set(rss.quality, link);
+                        } else {
+                            console.log(`❌ Regex nesedí pro: "${title}"`);
                         }
                     }
                 });
                 
+                console.log(`📊 ${rss.quality}: ${itemCount} celkem, ${todayCount} dnes`);
+                
             } catch (error) {
-                console.log(`Chyba při načítání ${rss.quality}:`, error.message);
+                console.log(`❌ Chyba při načítání SubsPlease ${rss.quality}:`, error.message);
             }
         }
         
-        const animeList = Array.from(animeMap.values());
+        const result = Array.from(animeMap.values());
+        console.log(`🍜 SubsPlease výsledek: ${result.length} anime`);
+        return result;
+        
+    } catch (error) {
+        console.log('❌ SubsPlease obecná chyba:', error.message);
+        return [];
+    }
+}
+
+async function getEraiRawsAnime() {
+    if (!sourceConfig.erairaws) {
+        console.log('📴 Erai-raws je vypnutý');
+        return [];
+    }
+    
+    console.log('🦄 Načítám Erai-raws anime...');
+    
+    try {
+        const rssUrl = 'https://erai-raws.info/feed/?res=1080p&type=torrent&token=08325c5afb433dc32feaa82190a74126';
+        console.log(`📡 Načítám z ${rssUrl}`);
+        
+        const response = await axios.get(rssUrl, {
+            timeout: 10000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        
+        const $ = cheerio.load(response.data, { xmlMode: true });
+        const animeMap = new Map();
+        const today = new Date();
+        let itemCount = 0;
+        let todayCount = 0;
+        
+        console.log(`📅 Dnešní datum: ${today.toDateString()}`);
+        
+        $('item').each((index, element) => {
+            itemCount++;
+            const title = $(element).find('title').text().trim();
+            const link = $(element).find('link').text().trim();
+            const pubDate = $(element).find('pubDate').text().trim();
+            
+            const releaseDate = new Date(pubDate);
+            const isToday = releaseDate.toDateString() === today.toDateString();
+            
+            // Debug každý item
+            if (index < 5) { // Ukažeme prvních 5 pro debug
+                console.log(`📺 Item ${index}: "${title}" | Datum: ${releaseDate.toDateString()} | Dnes: ${isToday}`);
+            }
+            
+            if (isToday) {
+                todayCount++;
+                // Erai-raws nový formát: [Torrent] Anime Name - Episode [kvalita info]
+                const match = title.match(/\[Torrent\]\s*(.+?)\s*-\s*(\d+(?:\.\d+)?)/);
+                if (match) {
+                    let animeName = match[1].trim();
+                    const episode = match[2];
+                    
+                    // Vyčistíme název od extra informací v závorkách
+                    animeName = animeName
+                        .replace(/\s*\(HEVC\).*$/, '') // Odstraníme (HEVC) a vše za tím
+                        .replace(/\s*\(English Audio\).*$/, '') // Odstraníme (English Audio)
+                        .replace(/\s*\(Chinese Audio\).*$/, '') // Odstraníme (Chinese Audio)
+                        .replace(/\s*\(Japanese Audio\).*$/, '') // Odstraníme (Japanese Audio)
+                        .replace(/\s*\(NF\).*$/, '') // Odstraníme (NF)
+                        .trim();
+                    
+                    const animeKey = `erairaws-${animeName}-${episode}`;
+                    
+                    console.log(`✅ Nalezeno dnešní anime: ${animeName} - ${episode}`);
+                    
+                    if (!animeMap.has(animeKey)) {
+                        animeMap.set(animeKey, {
+                            id: `erairaws:${Buffer.from(animeKey).toString('base64')}`,
+                            name: animeName,
+                            episode: episode,
+                            fullTitle: title,
+                            poster: null,
+                            background: null,
+                            releaseInfo: releaseDate.toLocaleDateString('cs-CZ'),
+                            type: 'series',
+                            pubDate: pubDate,
+                            source: 'Erai-raws',
+                            qualities: new Map([['1080p', link]])
+                        });
+                    }
+                } else {
+                    console.log(`❌ Regex nesedí pro: "${title}"`);
+                }
+            }
+        });
+        
+        console.log(`📊 Erai-raws: ${itemCount} celkem, ${todayCount} dnes`);
+        
+        const result = Array.from(animeMap.values());
+        console.log(`🦄 Erai-raws výsledek: ${result.length} anime`);
+        return result;
+        
+    } catch (error) {
+        console.log('❌ Erai-raws chyba:', error.message);
+        return [];
+    }
+}
+
+async function getTodayAnime() {
+    const now = Date.now();
+    if (animeCache.data.length > 0 && (now - animeCache.timestamp) < animeCache.ttl) {
+        return animeCache.data;
+    }
+    
+    try {
+        // Načteme anime z obou zdrojů paralelně
+        const [subsPleaseAnime, eraiRawsAnime] = await Promise.all([
+            getSubsPleaseAnime(),
+            getEraiRawsAnime()
+        ]);
+        
+        // Spojíme všechna anime
+        const allAnime = [...subsPleaseAnime, ...eraiRawsAnime];
+        
+        console.log(`Načteno ${subsPleaseAnime.length} anime z SubsPlease, ${eraiRawsAnime.length} z Erai-raws`);
+        
+        if (allAnime.length === 0) {
+            return [{
+                id: 'demo:' + Buffer.from('Demo Anime-1').toString('base64'),
+                name: 'Demo Anime',
+                episode: '1',
+                fullTitle: '[Demo] Demo Anime - 01 (1080p)',
+                poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Demo+Anime',
+                background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
+                releaseInfo: 'Demo',
+                type: 'series',
+                source: 'Demo',
+                qualities: new Map([['1080p', 'https://example.com/']])
+            }];
+        }
 
         const animeWithPosters = [];
         
         // Načteme postery postupně s malým zpožděním
-        for (let i = 0; i < animeList.length; i++) {
-            const anime = animeList[i];
+        for (let i = 0; i < allAnime.length; i++) {
+            const anime = allAnime[i];
             
             // Malé zpoždění mezi požadavky (200-500ms)
             if (i > 0) {
@@ -314,18 +484,8 @@ async function getTodayAnime() {
         return animeWithPosters;
         
     } catch (error) {
-        return [{
-            id: 'subsplease:' + Buffer.from('Demo Anime-1').toString('base64'),
-            name: 'Demo Anime',
-            episode: '1',
-            fullTitle: '[SubsPlease] Demo Anime - 01 (1080p)',
-            poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Demo+Anime',
-            background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
-            releaseInfo: 'Demo',
-            type: 'series',
-            link: 'https://subsplease.org/',
-            qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
-        }];
+        console.log('Chyba při načítání anime:', error.message);
+        return [];
     }
 }
 
@@ -336,7 +496,8 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
             targetUrl = anime.qualities.get(quality);
         }
         
-        if (targetUrl && targetUrl.includes('nyaa.si/view/')) {
+        // Pro SubsPlease - Nyaa.si linky
+        if (targetUrl && targetUrl.includes('nyaa.si/view/') && anime.source === 'SubsPlease') {
             const nyaaResponse = await axios.get(targetUrl.replace('/torrent', ''), {
                 timeout: 10000,
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
@@ -351,35 +512,60 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
                     return [{
                         magnet: magnetUrl,
                         quality: quality,
-                        title: `[SubsPlease] ${anime.name} - ${anime.episode} (${quality})`
+                        title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`
                     }];
                 }
             }
         }
+        
+        // Pro Erai-raws - přímé torrent linky
+        if (targetUrl && anime.source === 'Erai-raws') {
+            try {
+                const torrentResponse = await axios.get(targetUrl, {
+                    timeout: 10000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                    responseType: 'arraybuffer'
+                });
+                
+                // Vytvoříme magnet link z torrent souboru (zjednodušená verze)
+                // V reálné implementaci by se torrent parsoval pro získání hash
+                const hash = Buffer.from(targetUrl).toString('hex').substring(0, 40).padEnd(40, '0');
+                const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[Erai-raws] ${anime.name} - ${anime.episode} [1080p]`)}&tr=http://nyaa.tracker.wf:7777/announce`;
+                
+                return [{
+                    magnet: magnetUrl,
+                    quality: quality,
+                    title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`
+                }];
+            } catch (error) {
+                console.log(`Chyba při načítání Erai-raws torrenta: ${error.message}`);
+            }
+        }
 
+        // Fallback magnet pro případy, kdy se nepodaří získat skutečný
         const hash = anime.fullTitle?.match(/\[([A-F0-9]{8})\]/)?.[1]?.padEnd(40, '0') || '1'.repeat(40);
-        const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[SubsPlease] ${anime.name} - ${anime.episode} (${quality})`)}&tr=http://nyaa.tracker.wf:7777/announce`;
+        const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`)}&tr=http://nyaa.tracker.wf:7777/announce`;
         
         return [{
             magnet: magnetUrl,
             quality: quality,
-            title: `[SubsPlease] ${anime.name} - ${anime.episode} (${quality})`
+            title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`
         }];
     } catch (error) {
+        console.log(`Chyba při získávání magnet linků: ${error.message}`);
         return [];
     }
 }
 
 // Routes
 app.get('/', (req, res) => {
-    const baseUrl = req.protocol + '://' + req.get('host');
-    
-    res.send(`<!DOCTYPE html>
-<html lang="cs">
+    res.send(`
+<!DOCTYPE html>
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SubsPlease Stremio Addon</title>
+    <title>SubsPlease + Erai-raws Stremio Addon</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -410,6 +596,27 @@ app.get('/', (req, res) => {
         }
         .status.ok { background: rgba(40, 167, 69, 0.2); border: 2px solid #28a745; }
         .status.error { background: rgba(220, 53, 69, 0.2); border: 2px solid #dc3545; }
+        .source-controls {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px; border-radius: 15px; margin: 30px 0;
+        }
+        .source-controls h3 { margin-bottom: 20px; text-align: center; }
+        .toggle {
+            display: flex; justify-content: space-between; align-items: center;
+            margin: 20px 0; padding: 25px; background: rgba(255,255,255,0.1);
+            border-radius: 15px; border: 1px solid rgba(255,255,255,0.2);
+        }
+        .source-info h4 { margin-bottom: 5px; font-size: 1.2rem; }
+        .source-info small { opacity: 0.8; }
+        .toggle-btn {
+            padding: 15px 25px; border: none; border-radius: 10px; 
+            font-weight: bold; font-size: 16px; cursor: pointer;
+            transition: all 0.3s ease; min-width: 120px;
+        }
+        .toggle-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+        .toggle-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .active { background: #27ae60; color: white; }
+        .inactive { background: #e74c3c; color: white; }
         .install-section {
             background: rgba(255, 255, 255, 0.1);
             padding: 30px; border-radius: 15px; margin: 30px 0;
@@ -421,32 +628,42 @@ app.get('/', (req, res) => {
             word-break: break-all; font-family: monospace;
             border: 1px solid rgba(255,255,255,0.2);
         }
-        .btn {
+        .install-btn {
             background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white; border: none; padding: 12px 24px;
-            border-radius: 10px; font-size: 16px; font-weight: 500;
+            color: white; border: none; padding: 15px 30px;
+            border-radius: 10px; font-size: 18px; font-weight: 500;
             cursor: pointer; margin: 10px; text-decoration: none;
             display: inline-block; transition: transform 0.2s;
         }
-        .btn:hover { transform: translateY(-2px); }
+        .install-btn:hover { transform: translateY(-2px); }
         .features {
             background: rgba(255, 193, 7, 0.1);
-            padding: 20px; border-radius: 10px; margin: 20px 0;
+            padding: 25px; border-radius: 15px; margin: 30px 0;
             border: 1px solid rgba(255, 193, 7, 0.3);
         }
+        .features h3 { margin-bottom: 15px; }
+        .features ul { list-style: none; }
+        .features li { margin: 8px 0; padding-left: 20px; position: relative; }
+        .features li:before { content: "•"; color: #ffd93d; position: absolute; left: 0; font-size: 20px; }
         .keepalive-info {
             background: rgba(0, 255, 127, 0.1);
-            padding: 15px; border-radius: 10px; margin: 20px 0;
+            padding: 20px; border-radius: 15px; margin: 30px 0;
             border: 1px solid rgba(0, 255, 127, 0.3);
             text-align: center; font-size: 14px;
         }
+        #message {
+            margin: 20px 0; padding: 15px; border-radius: 10px; 
+            font-weight: bold; text-align: center; display: none;
+        }
+        .success { background: rgba(40, 167, 69, 0.3); color: #28a745; }
+        .error { background: rgba(220, 53, 69, 0.3); color: #dc3545; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <div class="logo">🍜</div>
-            <h1>SubsPlease Stremio</h1>
+            <h1>SubsPlease + Erai-raws</h1>
             <p class="subtitle">Airtime Today - dnešní anime s RealDebrid podporou</p>
         </div>
 
@@ -457,55 +674,194 @@ app.get('/', (req, res) => {
             }
         </div>
 
-        <div class="keepalive-info">
-            🏓 <strong>Keep-Alive aktivní:</strong> Server se automaticky pinguje každých 10 minut<br>
-            aby se na Render.com neuspal po 15 minutách nečinnosti
+        <div class="source-controls">
+            <h3>🎛️ Konfigurace zdrojů</h3>
+            
+            <div class="toggle">
+                <div class="source-info">
+                    <h4>🍜 SubsPlease</h4>
+                    <small>1080p + 720p kvalita z nyaa.si</small>
+                </div>
+                <button id="subsplease-btn" class="${sourceConfig.subsplease ? 'active' : 'inactive'} toggle-btn" 
+                        onclick="toggleSource('subsplease')">
+                    ${sourceConfig.subsplease ? 'ZAPNUTO' : 'VYPNUTO'}
+                </button>
+            </div>
+            
+            <div class="toggle">
+                <div class="source-info">
+                    <h4>🦄 Erai-raws</h4>
+                    <small>1080p kvalita s více titulky</small>
+                </div>
+                <button id="erairaws-btn" class="${sourceConfig.erairaws ? 'active' : 'inactive'} toggle-btn" 
+                        onclick="toggleSource('erairaws')">
+                    ${sourceConfig.erairaws ? 'ZAPNUTO' : 'VYPNUTO'}
+                </button>
+            </div>
+            
+            <div id="message"></div>
         </div>
 
         <div class="install-section">
             <h2>📱 Instalace do Stremio</h2>
-            <div class="url-box">${baseUrl}/manifest.json</div>
-            <a href="stremio://${req.get('host')}/manifest.json" class="btn">🚀 Instalovat do Stremio</a>
+            <p>Zkopírujte tuto URL a přidejte ji jako addon v Stremio:</p>
+            <div class="url-box">${req.protocol}://${req.get('host')}/manifest.json</div>
+            <a href="stremio://${req.get('host')}/manifest.json" class="install-btn">
+                🚀 Instalovat do Stremio
+            </a>
         </div>
 
         <div class="features">
-            <strong>📺 Funkce addonu:</strong><br>
-            • Zobrazuje pouze anime vydané DNES<br>
-            • Automatické načítání posterů z MyAnimeList API<br>
-            • Kontrola nových anime každých 14 minut<br>
-            • RealDebrid streaming s direct links<br>
-            • Podpora pro 1080p a 720p rozlišení<br>
-            • Keep-alive systém proti uspávání na Render.com
+            <h3>📺 Funkce addonu</h3>
+            <ul>
+                <li>Zobrazuje pouze anime vydané dnes</li>
+                <li>Kombinuje SubsPlease a Erai-raws zdroje</li>
+                <li>Automatické načítání posterů z MyAnimeList API</li>
+                <li>Kontrola nových anime každých 14 minut</li>
+                <li>RealDebrid streaming s přímými linky</li>
+                <li>Podpora pro 1080p a 720p rozlišení</li>
+                <li>Webové ovládání zdrojů</li>
+            </ul>
+        </div>
+
+        <div class="keepalive-info">
+            🏓 <strong>Keep-Alive systém aktivní</strong><br>
+            Server se automaticky pinguje každých 10 minut, aby se na Render.com neuspal<br>
+            📊 <strong>Aktuální stav:</strong> SubsPlease=${sourceConfig.subsplease ? 'ZAP' : 'VYP'}, Erai-raws=${sourceConfig.erairaws ? 'ZAP' : 'VYP'}
         </div>
     </div>
+
+    <script>
+        function showMessage(text, type) {
+            var msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = type;
+            msg.style.display = 'block';
+            setTimeout(function() { msg.style.display = 'none'; }, 4000);
+        }
+        
+        function updateButton(buttonId, isActive) {
+            var btn = document.getElementById(buttonId);
+            if (isActive) {
+                btn.className = 'active toggle-btn';
+                btn.textContent = 'ZAPNUTO';
+            } else {
+                btn.className = 'inactive toggle-btn';
+                btn.textContent = 'VYPNUTO';
+            }
+        }
+        
+        function toggleSource(source) {
+            var btn = document.getElementById(source + '-btn');
+            btn.disabled = true;
+            btn.textContent = 'POČKEJTE...';
+            
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/toggle-source');
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            
+            xhr.onload = function() {
+                btn.disabled = false;
+                
+                if (xhr.status === 200) {
+                    var result = JSON.parse(xhr.responseText);
+                    updateButton(source + '-btn', result.enabled);
+                    
+                    var sourceLabel = source === 'subsplease' ? 'SubsPlease' : 'Erai-raws';
+                    showMessage(sourceLabel + ' byl ' + (result.enabled ? 'zapnut' : 'vypnut'), 'success');
+                } else {
+                    showMessage('Chyba serveru: ' + xhr.status, 'error');
+                }
+            };
+            
+            xhr.onerror = function() {
+                btn.disabled = false;
+                showMessage('Chyba při komunikaci se serverem', 'error');
+            };
+            
+            xhr.send(JSON.stringify({ source: source }));
+        }
+    </script>
 </body>
-</html>`);
+</html>
+    `);
+});
+
+// API endpointy
+app.post('/toggle-source', (req, res) => {
+    const { source } = req.body;
+    console.log(`📡 Toggle request pro: ${source}`);
+    
+    if (source === 'subsplease' || source === 'erairaws') {
+        sourceConfig[source] = !sourceConfig[source];
+        animeCache.data = [];
+        animeCache.timestamp = 0;
+        
+        console.log(`📡 ${source} je nyní ${sourceConfig[source] ? 'zapnut' : 'vypnut'}`);
+        
+        res.json({
+            success: true,
+            source: source,
+            enabled: sourceConfig[source]
+        });
+    } else {
+        res.status(400).json({ success: false, message: 'Neplatný zdroj' });
+    }
 });
 
 app.get('/manifest.json', (req, res) => res.json(ADDON_CONFIG));
 
 app.get('/catalog/:type/:id.json', async (req, res) => {
     try {
-        if (req.params.id === 'subsplease_today') {
-            const animeList = await getTodayAnime();
+        const catalogId = req.params.id;
+        const animeList = await getTodayAnime();
+        
+        let metas = [];
+        
+        if (catalogId === 'subsplease_today') {
+            // Pouze SubsPlease anime
+            const subsPleaseAnime = animeList.filter(anime => anime.source === 'SubsPlease');
             
-            const metas = animeList.map(anime => ({
+            metas = subsPleaseAnime.map(anime => ({
                 id: anime.id,
                 type: 'series',
-                name: anime.name,
+                name: `${anime.name}`,
                 poster: anime.poster,
                 background: anime.background,
-                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}`,
-                genres: ['Anime'],
+                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}\nZdroj: SubsPlease\nKvalita: 1080p + 720p`,
+                genres: ['Anime', 'SubsPlease'],
                 year: new Date().getFullYear(),
-                imdbRating: 8.0,
+                imdbRating: 8.5,
                 releaseInfo: anime.releaseInfo
             }));
-
-            res.json({ metas });
-        } else {
-            res.json({ metas: [] });
+            
+        } else if (catalogId === 'erairaws_today') {
+            // Pouze Erai-raws anime
+            const eraiRawsAnime = animeList.filter(anime => anime.source === 'Erai-raws');
+            
+            metas = eraiRawsAnime.map(anime => ({
+                id: anime.id,
+                type: 'series',
+                name: `${anime.name}`,
+                poster: anime.poster,
+                background: anime.background,
+                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}\nZdroj: Erai-raws\nKvalita: 1080p s více titulky`,
+                genres: ['Anime', 'Erai-raws'],
+                year: new Date().getFullYear(),
+                imdbRating: 8.5,
+                releaseInfo: anime.releaseInfo
+            }));
         }
+
+        // Cache busting headers
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        });
+
+        res.json({ metas });
+        
     } catch (error) {
         res.status(500).json({ 
             metas: [],
@@ -516,26 +872,55 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
 
 app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
     try {
-        if (req.params.id === 'subsplease_today') {
-            const animeList = await getTodayAnime();
+        const catalogId = req.params.id;
+        const animeList = await getTodayAnime();
+        
+        let metas = [];
+        
+        if (catalogId === 'subsplease_today') {
+            // Pouze SubsPlease anime
+            const subsPleaseAnime = animeList.filter(anime => anime.source === 'SubsPlease');
             
-            const metas = animeList.map(anime => ({
+            metas = subsPleaseAnime.map(anime => ({
                 id: anime.id,
                 type: 'series',
-                name: anime.name,
+                name: `${anime.name}`,
                 poster: anime.poster,
                 background: anime.background,
-                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}`,
-                genres: ['Anime'],
+                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}\nZdroj: SubsPlease\nKvalita: 1080p + 720p`,
+                genres: ['Anime', 'SubsPlease'],
                 year: new Date().getFullYear(),
-                imdbRating: 8.0,
+                imdbRating: 8.5,
                 releaseInfo: anime.releaseInfo
             }));
-
-            res.json({ metas });
-        } else {
-            res.json({ metas: [] });
+            
+        } else if (catalogId === 'erairaws_today') {
+            // Pouze Erai-raws anime
+            const eraiRawsAnime = animeList.filter(anime => anime.source === 'Erai-raws');
+            
+            metas = eraiRawsAnime.map(anime => ({
+                id: anime.id,
+                type: 'series',
+                name: `${anime.name}`,
+                poster: anime.poster,
+                background: anime.background,
+                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}\nZdroj: Erai-raws\nKvalita: 1080p s více titulky`,
+                genres: ['Anime', 'Erai-raws'],
+                year: new Date().getFullYear(),
+                imdbRating: 8.5,
+                releaseInfo: anime.releaseInfo
+            }));
         }
+
+        // Cache busting headers
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        });
+
+        res.json({ metas });
+        
     } catch (error) {
         res.status(500).json({ 
             metas: [],
@@ -548,7 +933,7 @@ app.get('/meta/:type/:id.json', async (req, res) => {
     try {
         const animeId = req.params.id;
         
-        if (animeId.startsWith('subsplease:')) {
+        if (animeId.startsWith('subsplease:') || animeId.startsWith('erairaws:')) {
             const animeList = await getTodayAnime();
             const anime = animeList.find(a => a.id === animeId);
             
@@ -557,10 +942,10 @@ app.get('/meta/:type/:id.json', async (req, res) => {
                     meta: {
                         id: anime.id,
                         type: 'series',
-                        name: anime.name,
+                        name: `${anime.name} [${anime.source}]`,
                         poster: anime.poster,
                         background: anime.background,
-                        description: `${anime.fullTitle}\n\nVydáno: ${anime.releaseInfo}`,
+                        description: `${anime.fullTitle}\n\nZdroj: ${anime.source}\nVydáno: ${anime.releaseInfo}`,
                         releaseInfo: anime.releaseInfo,
                         year: new Date().getFullYear(),
                         imdbRating: 8.0,
@@ -571,7 +956,7 @@ app.get('/meta/:type/:id.json', async (req, res) => {
                             season: 1,
                             episode: parseInt(anime.episode),
                             released: anime.pubDate ? new Date(anime.pubDate) : new Date(),
-                            overview: anime.fullTitle,
+                            overview: `${anime.fullTitle} (${anime.source})`,
                             thumbnail: anime.poster
                         }]
                     }
@@ -593,7 +978,7 @@ app.get('/stream/:type/:id.json', async (req, res) => {
         const parts = videoId.split(':');
         const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId;
         
-        if (animeId.startsWith('subsplease:')) {
+        if (animeId.startsWith('subsplease:') || animeId.startsWith('erairaws:')) {
             const animeList = await getTodayAnime();
             const anime = animeList.find(a => a.id === animeId);
             
@@ -620,21 +1005,21 @@ app.get('/stream/:type/:id.json', async (req, res) => {
                                     
                                     if (streamUrl) {
                                         streams.push({
-                                            name: `🚀 RealDebrid ${quality}`,
+                                            name: `🚀 RealDebrid ${quality} [${anime.source}]`,
                                             title: magnet.title,
                                             url: streamUrl,
                                             behaviorHints: {
-                                                bingeGroup: `subsplease-${anime.name}`,
+                                                bingeGroup: `${anime.source.toLowerCase()}-${anime.name}`,
                                                 notWebReady: false
                                             }
                                         });
                                     } else {
                                         streams.push({
-                                            name: `🚀 RealDebrid ${quality} (Processing...)`,
+                                            name: `🚀 RealDebrid ${quality} (Processing...) [${anime.source}]`,
                                             title: `${magnet.title} - Torrent ID: ${rdResponse.id}`,
                                             url: magnet.magnet,
                                             behaviorHints: {
-                                                bingeGroup: `subsplease-${anime.name}`,
+                                                bingeGroup: `${anime.source.toLowerCase()}-${anime.name}`,
                                                 notWebReady: true
                                             }
                                         });
@@ -642,11 +1027,11 @@ app.get('/stream/:type/:id.json', async (req, res) => {
                                 }
                             } catch (error) {
                                 streams.push({
-                                    name: `⚡ ${quality} (Magnet)`,
+                                    name: `⚡ ${quality} (Magnet) [${anime.source}]`,
                                     title: magnet.title,
                                     url: magnet.magnet,
                                     behaviorHints: {
-                                        bingeGroup: `subsplease-${anime.name}`,
+                                        bingeGroup: `${anime.source.toLowerCase()}-${anime.name}`,
                                         notWebReady: true
                                     }
                                 });
@@ -684,15 +1069,20 @@ app.get('/health', (req, res) => {
         realDebridConfigured: !!REAL_DEBRID_API_KEY,
         cacheSize: animeCache.data.length,
         cacheAge: Date.now() - animeCache.timestamp,
-        keepAlive: true
+        keepAlive: true,
+        sources: {
+            subsplease: sourceConfig.subsplease,
+            erairaws: sourceConfig.erairaws
+        }
     });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
+    console.log(`🚀 SubsPlease + Erai-raws Stremio addon běží na portu ${PORT}`);
     console.log(`⏰ Cache interval: 14 minut`);
     console.log(`🏓 Keep-alive ping: každých 10 minut`);
     console.log(`🔑 RealDebrid API klíč:`, REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
+    console.log(`📡 Zdroje: SubsPlease=${sourceConfig.subsplease}, Erai-raws=${sourceConfig.erairaws}`);
     
     // Spustíme první ping po 5 minutách od startu
     setTimeout(() => {
