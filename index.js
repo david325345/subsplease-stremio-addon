@@ -32,6 +32,20 @@ const ADDON_CONFIG = {
 
 let animeCache = { data: [], timestamp: 0, ttl: 14 * 60 * 1000 };
 
+// Keep-alive ping funkce
+async function keepAlive() {
+    try {
+        const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+        const response = await axios.get(`${baseUrl}/health`, { timeout: 5000 });
+        console.log(`🏓 Keep-alive ping úspěšný - Status: ${response.data.status}`);
+    } catch (error) {
+        console.log(`⚠️ Keep-alive ping selhal:`, error.message);
+    }
+}
+
+// Spustíme keep-alive ping každých 10 minut
+setInterval(keepAlive, 10 * 60 * 1000); // 10 minut = 600,000 ms
+
 async function addMagnetToRealDebrid(magnetUrl) {
     const response = await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', 
         `magnet=${encodeURIComponent(magnetUrl)}`,
@@ -420,6 +434,12 @@ app.get('/', (req, res) => {
             padding: 20px; border-radius: 10px; margin: 20px 0;
             border: 1px solid rgba(255, 193, 7, 0.3);
         }
+        .keepalive-info {
+            background: rgba(0, 255, 127, 0.1);
+            padding: 15px; border-radius: 10px; margin: 20px 0;
+            border: 1px solid rgba(0, 255, 127, 0.3);
+            text-align: center; font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -437,6 +457,11 @@ app.get('/', (req, res) => {
             }
         </div>
 
+        <div class="keepalive-info">
+            🏓 <strong>Keep-Alive aktivní:</strong> Server se automaticky pinguje každých 10 minut<br>
+            aby se na Render.com neuspal po 15 minutách nečinnosti
+        </div>
+
         <div class="install-section">
             <h2>📱 Instalace do Stremio</h2>
             <div class="url-box">${baseUrl}/manifest.json</div>
@@ -449,7 +474,8 @@ app.get('/', (req, res) => {
             • Automatické načítání posterů z MyAnimeList API<br>
             • Kontrola nových anime každých 14 minut<br>
             • RealDebrid streaming s direct links<br>
-            • Podpora pro 1080p a 720p rozlišení
+            • Podpora pro 1080p a 720p rozlišení<br>
+            • Keep-alive systém proti uspávání na Render.com
         </div>
     </div>
 </body>
@@ -657,12 +683,20 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         realDebridConfigured: !!REAL_DEBRID_API_KEY,
         cacheSize: animeCache.data.length,
-        cacheAge: Date.now() - animeCache.timestamp
+        cacheAge: Date.now() - animeCache.timestamp,
+        keepAlive: true
     });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
     console.log(`⏰ Cache interval: 14 minut`);
+    console.log(`🏓 Keep-alive ping: každých 10 minut`);
     console.log(`🔑 RealDebrid API klíč:`, REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
+    
+    // Spustíme první ping po 5 minutách od startu
+    setTimeout(() => {
+        console.log(`🏓 Spouštím keep-alive systém...`);
+        keepAlive(); // První ping
+    }, 5 * 60 * 1000); // 5 minut po startu
 });
