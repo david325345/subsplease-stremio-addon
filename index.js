@@ -4,8 +4,20 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+
+// Přidáme middleware pro CORS headers
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    next();
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -494,7 +506,7 @@ app.get('/', (req, res) => {
 
     <script>
         function generatePersonalUrl() {
-            const apiKey = document.getElementById('apiKey').value;
+            const apiKey = document.getElementById('apiKey').value.trim();
             const statusDiv = document.getElementById('apiStatus');
             
             if (!apiKey) {
@@ -504,24 +516,28 @@ app.get('/', (req, res) => {
             
             statusDiv.innerHTML = '<div class="alert alert-info">🔄 Ověřuji API klíč...</div>';
             
-            fetch('https://api.real-debrid.com/rest/1.0/user', {
-                headers: { 'Authorization': 'Bearer ' + apiKey }
+            // Použijeme náš server pro test API klíče (obchází CORS problémy)
+            fetch('/test-api/' + btoa(apiKey), {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
             })
-            .then(res => {
-                if (!res.ok) throw new Error('Neplatný API klíč');
-                return res.json();
-            })
+            .then(res => res.json())
             .then(data => {
-                statusDiv.innerHTML = '<div class="alert alert-success">✅ API klíč ověřen! Uživatel: ' + data.username + '</div>';
-                
-                const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json';
-                document.getElementById('manifestUrl').textContent = personalManifestUrl;
-                document.getElementById('personalUrl').style.display = 'block';
-                
-                window.generatedManifestUrl = personalManifestUrl;
+                if (data.success) {
+                    statusDiv.innerHTML = '<div class="alert alert-success">✅ API klíč ověřen! Uživatel: ' + data.user + '</div>';
+                    
+                    const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json';
+                    document.getElementById('manifestUrl').textContent = personalManifestUrl;
+                    document.getElementById('personalUrl').style.display = 'block';
+                    
+                    window.generatedManifestUrl = personalManifestUrl;
+                } else {
+                    throw new Error(data.error || 'Neplatný API klíč');
+                }
             })
             .catch(err => {
-                statusDiv.innerHTML = '<div class="alert alert-danger">❌ ' + err.message + '</div>';
+                console.error('Error:', err);
+                statusDiv.innerHTML = '<div class="alert alert-danger">❌ ' + err.message + '<br><small>Tip: Zkontrolujte API klíč na real-debrid.com/apitoken</small></div>';
             });
         }
 
@@ -748,6 +764,29 @@ app.get('/stream/:type/:id.json', async (req, res) => {
     } catch (error) {
         res.status(500).json({ 
             streams: [{ name: '❌ Chyba', url: 'https://subsplease.org' }]
+        });
+    }
+});
+
+app.get('/test-api/:apiKey', async (req, res) => {
+    try {
+        const apiKey = Buffer.from(req.params.apiKey, 'base64').toString('utf-8');
+        
+        const response = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            timeout: 10000
+        });
+        
+        res.json({
+            success: true,
+            user: response.data.username,
+            message: 'API klíč funguje správně'
+        });
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            error: error.response?.status === 401 ? 'Neplatný API klíč' : 'Chyba API',
+            details: error.message
         });
     }
 });
