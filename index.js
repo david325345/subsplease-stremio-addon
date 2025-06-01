@@ -559,8 +559,8 @@ app.get('/', (req, res) => {
             .then(data => {
                 statusDiv.innerHTML = '<div class="alert alert-success">✅ API klíč ověřen! Uživatel: ' + data.username + '</div>';
                 
-                // Vygenerujeme osobní URL
-                const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json';
+                // Vygenerujeme osobní URL s API klíčem jako query parametr
+                const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json?apiKey=' + btoa(apiKey);
                 document.getElementById('manifestUrl').textContent = personalManifestUrl;
                 document.getElementById('personalUrl').style.display = 'block';
                 
@@ -586,28 +586,49 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
+// Upravená konfigurace pro dynamické URL
+function getAddonConfig(encodedApiKey) {
+    return {
+        id: 'org.subsplease.stremio.' + encodedApiKey.substring(0, 8),
+        version: '1.0.0',
+        name: 'SubsPlease Airtime Today',
+        description: 'Anime vydané dnes z SubsPlease s automatickými postery',
+        logo: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo.png',
+        background: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo-banner.png',
+        resources: ['catalog', 'meta', 'stream'],
+        types: ['series'],
+        catalogs: [{
+            type: 'series',
+            id: 'subsplease_today',
+            name: 'Airtime Today',
+            extra: [{ name: 'apiKey', options: [encodedApiKey] }]
+        }]
+    };
+}
+
 app.get('/manifest/:encodedApiKey.json', (req, res) => {
     try {
-        const apiKey = Buffer.from(req.params.encodedApiKey, 'base64').toString('utf-8');
+        const encodedApiKey = req.params.encodedApiKey;
+        const apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
         
         // Jednoduchá validace API klíče
         if (!apiKey || apiKey.length < 20) {
             return res.status(400).json({ error: 'Neplatný API klíč' });
         }
         
-        res.json(ADDON_CONFIG);
+        res.json(getAddonConfig(encodedApiKey));
     } catch (error) {
         res.status(400).json({ error: 'Chyba při dekódování API klíče' });
     }
 });
 
-app.get('/catalog/:type/:id/:encodedApiKey.json', async (req, res) => {
+app.get('/catalog/:type/:id.json', async (req, res) => {
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
             
             const metas = animeList.map(anime => ({
-                id: anime.id + ':' + req.params.encodedApiKey,
+                id: anime.id,
                 type: 'series',
                 name: anime.name,
                 poster: anime.poster,
