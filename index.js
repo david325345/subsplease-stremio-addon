@@ -17,7 +17,7 @@ console.log('🔑 RealDebrid API klíč:', REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'N
 const ADDON_CONFIG = {
     id: 'org.subsplease.stremio',
     version: '1.0.0',
-    name: 'SubsPlease Dnešní Anime',
+    name: 'SubsPlease Airtime Today',
     description: 'Anime vydané dnes z SubsPlease s automatickými postery',
     logo: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo.png',
     background: 'https://subsplease.org/wp-content/uploads/2019/01/SubsPlease-logo-banner.png',
@@ -26,7 +26,7 @@ const ADDON_CONFIG = {
     catalogs: [{
         type: 'series',
         id: 'subsplease_today',
-        name: 'Dnešní anime'
+        name: 'Airtime Today'
     }]
 };
 
@@ -103,26 +103,66 @@ async function getRealDebridStreamUrl(torrentId, maxRetries = 5) {
 
 async function getAnimePoster(animeName) {
     try {
-        const searchQuery = encodeURIComponent(animeName.replace(/[^\w\s]/g, '').trim());
-        const searchUrl = `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=1`;
+        // Speciální mapování pro problematické názvy
+        const specialMappings = {
+            'Kimi to Idol Precure': 'Wonderful Precure',
+            'Kimi to Idol PreCure': 'Wonderful Precure',
+            'Pretty Cure': 'Precure',
+            'PreCure': 'Precure'
+        };
         
-        const response = await axios.get(searchUrl, { timeout: 5000 });
+        // Použijeme mapování pokud existuje
+        let searchName = specialMappings[animeName] || animeName;
+        
+        // Vyčistíme název pro lepší vyhledávání
+        searchName = searchName
+            .replace(/[^\w\s]/g, ' ')  // Odstraníme speciální znaky
+            .replace(/\s+/g, ' ')      // Nahradíme více mezer jednou
+            .trim();
+        
+        const searchQuery = encodeURIComponent(searchName);
+        const searchUrl = `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=3`;
+        
+        console.log(`Hledám poster pro: "${animeName}" -> "${searchName}"`);
+        
+        const response = await axios.get(searchUrl, { timeout: 8000 });
         
         if (response.data && response.data.data && response.data.data.length > 0) {
-            const anime = response.data.data[0];
-            const images = anime.images?.jpg;
+            // Pokusíme se najít nejlepší shodu
+            let bestMatch = response.data.data[0];
             
+            // Pokud máme více výsledků, zkusíme najít lepší shodu
+            if (response.data.data.length > 1) {
+                for (const anime of response.data.data) {
+                    const title = anime.title?.toLowerCase() || '';
+                    const searchLower = searchName.toLowerCase();
+                    
+                    // Přesná shoda má přednost
+                    if (title.includes(searchLower) || searchLower.includes(title)) {
+                        bestMatch = anime;
+                        break;
+                    }
+                }
+            }
+            
+            const images = bestMatch.images?.jpg;
             const posterUrl = images?.large_image_url || images?.image_url;
             
-            return {
-                poster: posterUrl || 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Anime+Poster',
-                background: posterUrl || 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Anime+Background'
-            };
+            if (posterUrl) {
+                console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
+                return {
+                    poster: posterUrl,
+                    background: posterUrl
+                };
+            }
         }
+        
+        console.log(`⚠️ Poster nenalezen pro "${animeName}", používám fallback`);
     } catch (error) {
-        // Pokud API selže, použijeme fallback
+        console.log(`❌ Chyba při hledání posteru pro "${animeName}":`, error.message);
     }
     
+    // Fallback poster
     return {
         poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=SubsPlease',
         background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=SubsPlease'
@@ -338,7 +378,7 @@ app.get('/', (req, res) => {
         <div class="header">
             <div class="logo">🍜</div>
             <h1>SubsPlease Stremio</h1>
-            <p class="subtitle">Dnešní anime s RealDebrid podporou</p>
+            <p class="subtitle">Airtime Today - dnešní anime s RealDebrid podporou</p>
         </div>
 
         <div class="status ${REAL_DEBRID_API_KEY ? 'ok' : 'error'}">
