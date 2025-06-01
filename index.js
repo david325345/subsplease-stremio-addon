@@ -4,24 +4,16 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors());
 app.use(express.json());
-
-// Přidáme middleware pro CORS headers
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    next();
-});
 
 const PORT = process.env.PORT || 3000;
 
-// Základní konfigurace
+// RealDebrid API klíč z environment variable
+let REAL_DEBRID_API_KEY = process.env.REAL_DEBRID_API_KEY || '';
+
+console.log('🔑 RealDebrid API klíč:', REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
+
 const ADDON_CONFIG = {
     id: 'org.subsplease.stremio',
     version: '1.0.0',
@@ -40,13 +32,12 @@ const ADDON_CONFIG = {
 
 let animeCache = { data: [], timestamp: 0, ttl: 14 * 60 * 1000 };
 
-// Pomocné funkce
-async function addMagnetToRealDebrid(magnetUrl, apiKey) {
+async function addMagnetToRealDebrid(magnetUrl) {
     const response = await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', 
         `magnet=${encodeURIComponent(magnetUrl)}`,
         {
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
+                'Authorization': `Bearer ${REAL_DEBRID_API_KEY}`,
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         }
@@ -54,11 +45,11 @@ async function addMagnetToRealDebrid(magnetUrl, apiKey) {
     return response.data;
 }
 
-async function getRealDebridStreamUrl(torrentId, apiKey, maxRetries = 5) {
+async function getRealDebridStreamUrl(torrentId, maxRetries = 5) {
     for (let i = 0; i < maxRetries; i++) {
         try {
             const torrentInfo = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`, {
-                headers: { 'Authorization': `Bearer ${apiKey}` }
+                headers: { 'Authorization': `Bearer ${REAL_DEBRID_API_KEY}` }
             });
 
             if (torrentInfo.data.status === 'downloaded' && torrentInfo.data.links && torrentInfo.data.links.length > 0) {
@@ -68,7 +59,7 @@ async function getRealDebridStreamUrl(torrentId, apiKey, maxRetries = 5) {
                     `link=${encodeURIComponent(downloadLink)}`,
                     {
                         headers: {
-                            'Authorization': `Bearer ${apiKey}`,
+                            'Authorization': `Bearer ${REAL_DEBRID_API_KEY}`,
                             'Content-Type': 'application/x-www-form-urlencoded'
                         }
                     }
@@ -91,7 +82,7 @@ async function getRealDebridStreamUrl(torrentId, apiKey, maxRetries = 5) {
                         `files=${largestFile.id}`,
                         {
                             headers: {
-                                'Authorization': `Bearer ${apiKey}`,
+                                'Authorization': `Bearer ${REAL_DEBRID_API_KEY}`,
                                 'Content-Type': 'application/x-www-form-urlencoded'
                             }
                         }
@@ -112,6 +103,7 @@ async function getRealDebridStreamUrl(torrentId, apiKey, maxRetries = 5) {
 
 async function getAnimePoster(animeName) {
     try {
+        // Speciální mapování pro problematické názvy
         const specialMappings = {
             'Kimi to Idol Precure': 'Wonderful Precure',
             'Kimi to Idol PreCure': 'Wonderful Precure',
@@ -120,35 +112,51 @@ async function getAnimePoster(animeName) {
             'Shirohiyo': 'Shiro Hiyoko'
         };
         
+        // Použijeme mapování pokud existuje
         let searchName = specialMappings[animeName] || animeName;
-        searchName = searchName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        
+        // Vyčistíme název pro lepší vyhledávání
+        searchName = searchName
+            .replace(/[^\w\s]/g, ' ')  // Odstraníme speciální znaky
+            .replace(/\s+/g, ' ')      // Nahradíme více mezer jednou
+            .trim();
         
         const searchQuery = encodeURIComponent(searchName);
         const searchUrl = `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=3`;
         
+        console.log(`Hledám poster pro: "${animeName}" -> "${searchName}"`);
+        
+        // Retry logika pro rate limiting
         let attempt = 0;
         const maxAttempts = 3;
         
         while (attempt < maxAttempts) {
             try {
+                // Náhodné zpoždění 1-3 sekundy pro vyhnutí se rate limitu
                 if (attempt > 0) {
-                    const delay = Math.random() * 2000 + 1000;
+                    const delay = Math.random() * 2000 + 1000; // 1-3 sekund
                     await new Promise(resolve => setTimeout(resolve, delay));
+                    console.log(`Pokus ${attempt + 1}/3 pro "${animeName}" po ${Math.round(delay)}ms`);
                 }
                 
                 const response = await axios.get(searchUrl, { 
                     timeout: 10000,
-                    headers: { 'User-Agent': 'SubsPlease-Stremio-Addon/1.0' }
+                    headers: {
+                        'User-Agent': 'SubsPlease-Stremio-Addon/1.0'
+                    }
                 });
                 
                 if (response.data && response.data.data && response.data.data.length > 0) {
+                    // Pokusíme se najít nejlepší shodu
                     let bestMatch = response.data.data[0];
                     
+                    // Pokud máme více výsledků, zkusíme najít lepší shodu
                     if (response.data.data.length > 1) {
                         for (const anime of response.data.data) {
                             const title = anime.title?.toLowerCase() || '';
                             const searchLower = searchName.toLowerCase();
                             
+                            // Přesná shoda má přednost
                             if (title.includes(searchLower) || searchLower.includes(title)) {
                                 bestMatch = anime;
                                 break;
@@ -160,27 +168,41 @@ async function getAnimePoster(animeName) {
                     const posterUrl = images?.large_image_url || images?.image_url;
                     
                     if (posterUrl) {
+                        console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
                         return {
                             poster: posterUrl,
                             background: posterUrl
                         };
                     }
                 }
-                break;
+                
+                break; // Úspěšný požadavek, ale žádný výsledek
+                
             } catch (error) {
                 attempt++;
+                
                 if (error.response?.status === 429) {
-                    if (attempt >= maxAttempts) break;
+                    console.log(`⏳ Rate limit pro "${animeName}", pokus ${attempt}/${maxAttempts}`);
+                    
+                    if (attempt >= maxAttempts) {
+                        console.log(`❌ Max pokusy vyčerpány pro "${animeName}"`);
+                        break;
+                    }
+                    // Pokračujeme s dalším pokusem
                     continue;
                 } else {
+                    console.log(`❌ Chyba při hledání posteru pro "${animeName}":`, error.message);
                     break;
                 }
             }
         }
+        
+        console.log(`⚠️ Poster nenalezen pro "${animeName}", používám fallback`);
     } catch (error) {
-        // Fallback na chybu
+        console.log(`❌ Obecná chyba pro "${animeName}":`, error.message);
     }
     
+    // Fallback poster
     return {
         poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=SubsPlease',
         background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=SubsPlease'
@@ -252,11 +274,14 @@ async function getTodayAnime() {
         }
         
         const animeList = Array.from(animeMap.values());
+
         const animeWithPosters = [];
         
+        // Načteme postery postupně s malým zpožděním
         for (let i = 0; i < animeList.length; i++) {
             const anime = animeList[i];
             
+            // Malé zpoždění mezi požadavky (200-500ms)
             if (i > 0) {
                 const delay = Math.random() * 300 + 200;
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -284,6 +309,7 @@ async function getTodayAnime() {
             background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
             releaseInfo: 'Demo',
             type: 'series',
+            link: 'https://subsplease.org/',
             qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
         }];
     }
@@ -348,7 +374,7 @@ app.get('/', (req, res) => {
             min-height: 100vh; padding: 20px; color: white;
         }
         .container {
-            max-width: 900px; margin: 0 auto;
+            max-width: 800px; margin: 0 auto;
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             border-radius: 20px; padding: 40px;
@@ -364,87 +390,35 @@ app.get('/', (req, res) => {
         }
         h1 { margin-bottom: 10px; font-size: 2.5rem; }
         .subtitle { font-size: 1.1rem; opacity: 0.9; }
-        .section {
+        .status {
+            padding: 20px; margin: 20px 0; border-radius: 15px;
+            text-align: center; font-weight: 500;
+        }
+        .status.ok { background: rgba(40, 167, 69, 0.2); border: 2px solid #28a745; }
+        .status.error { background: rgba(220, 53, 69, 0.2); border: 2px solid #dc3545; }
+        .install-section {
             background: rgba(255, 255, 255, 0.1);
             padding: 30px; border-radius: 15px; margin: 30px 0;
-            border: 1px solid rgba(255,255,255,0.2);
+            text-align: center;
         }
-        .form-group { margin: 20px 0; }
-        .form-group label {
-            display: block; margin-bottom: 8px;
-            font-weight: 500; color: white;
-        }
-        .form-group input {
-            width: 100%; padding: 12px 16px;
-            border: 2px solid rgba(255,255,255,0.3); 
-            border-radius: 10px; font-size: 16px;
-            background: rgba(255,255,255,0.1);
-            color: white;
-        }
-        .form-group input::placeholder {
-            color: rgba(255,255,255,0.7);
-        }
-        .btn {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white; border: none; padding: 12px 24px;
-            border-radius: 10px; font-size: 16px; font-weight: 500;
-            cursor: pointer; margin: 10px 5px; text-decoration: none;
-            display: inline-block; transition: transform 0.2s;
-        }
-        .btn:hover { transform: translateY(-2px); }
-        .btn-success { background: linear-gradient(45deg, #28a745, #20c997); }
-        .btn-install { background: linear-gradient(45deg, #ff6b6b, #ffd93d); font-size: 18px; padding: 15px 30px; }
         .url-box {
             background: rgba(0,0,0,0.3); padding: 15px; 
             border-radius: 8px; margin: 15px 0;
             word-break: break-all; font-family: monospace;
             border: 1px solid rgba(255,255,255,0.2);
-            font-size: 14px;
         }
-        .alert {
-            padding: 15px; margin: 15px 0; border-radius: 8px;
-            border: 1px solid;
+        .btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white; border: none; padding: 12px 24px;
+            border-radius: 10px; font-size: 16px; font-weight: 500;
+            cursor: pointer; margin: 10px; text-decoration: none;
+            display: inline-block; transition: transform 0.2s;
         }
-        .alert-success { 
-            background: rgba(40, 167, 69, 0.2); 
-            border-color: #28a745; 
-            color: #d4edda; 
-        }
-        .alert-danger { 
-            background: rgba(220, 53, 69, 0.2); 
-            border-color: #dc3545; 
-            color: #f8d7da; 
-        }
-        .alert-info { 
-            background: rgba(23, 162, 184, 0.2); 
-            border-color: #17a2b8; 
-            color: #d1ecf1; 
-        }
+        .btn:hover { transform: translateY(-2px); }
         .features {
             background: rgba(255, 193, 7, 0.1);
             padding: 20px; border-radius: 10px; margin: 20px 0;
             border: 1px solid rgba(255, 193, 7, 0.3);
-        }
-        .install-section {
-            text-align: center;
-            padding: 20px 0;
-        }
-        .step {
-            margin: 15px 0;
-            padding: 15px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 10px;
-            text-align: left;
-        }
-        .step-number {
-            display: inline-block;
-            width: 30px; height: 30px;
-            background: linear-gradient(45deg, #ff6b6b, #ffd93d);
-            border-radius: 50%;
-            text-align: center;
-            line-height: 30px;
-            font-weight: bold;
-            margin-right: 10px;
         }
     </style>
 </head>
@@ -456,41 +430,17 @@ app.get('/', (req, res) => {
             <p class="subtitle">Airtime Today - dnešní anime s RealDebrid podporou</p>
         </div>
 
-        <div class="section">
-            <h2>🔑 Váš RealDebrid API Klíč</h2>
-            <p style="margin-bottom: 20px;">Pro použití addonu potřebujete RealDebrid Premium účet a API klíč.</p>
-            
-            <div class="step">
-                <span class="step-number">1</span>
-                <strong>Získejte API klíč:</strong> Jděte na 
-                <a href="https://real-debrid.com/apitoken" target="_blank" style="color: #ffd93d;">real-debrid.com/apitoken</a>
-            </div>
-            
-            <div class="step">
-                <span class="step-number">2</span>
-                <strong>Vložte API klíč zde:</strong>
-                <div class="form-group">
-                    <input type="password" id="apiKey" placeholder="Vložte váš RealDebrid API token zde">
-                </div>
-            </div>
-            
-            <div class="step">
-                <span class="step-number">3</span>
-                <strong>Ověřte klíč a získejte osobní URL:</strong>
-                <button class="btn btn-success" onclick="generatePersonalUrl()">🔗 Vygenerovat osobní URL</button>
-            </div>
-            
-            <div id="apiStatus"></div>
-            <div id="personalUrl" style="display: none;">
-                <h3 style="margin: 20px 0 10px 0;">📱 Vaše osobní URL pro Stremio:</h3>
-                <div class="url-box" id="manifestUrl"></div>
-                <div class="install-section">
-                    <button class="btn btn-install" onclick="installToStremio()">🚀 Instalovat do Stremio</button>
-                    <p style="margin-top: 15px; opacity: 0.8; font-size: 14px;">
-                        Tato URL obsahuje váš API klíč a je pouze pro vás!
-                    </p>
-                </div>
-            </div>
+        <div class="status ${REAL_DEBRID_API_KEY ? 'ok' : 'error'}">
+            ${REAL_DEBRID_API_KEY ? 
+                '✅ RealDebrid API klíč je nakonfigurován' : 
+                '⚠️ RealDebrid API klíč není nastaven - kontaktujte administrátora'
+            }
+        </div>
+
+        <div class="install-section">
+            <h2>📱 Instalace do Stremio</h2>
+            <div class="url-box">${baseUrl}/manifest.json</div>
+            <a href="stremio://${req.get('host')}/manifest.json" class="btn">🚀 Instalovat do Stremio</a>
         </div>
 
         <div class="features">
@@ -499,90 +449,49 @@ app.get('/', (req, res) => {
             • Automatické načítání posterů z MyAnimeList API<br>
             • Kontrola nových anime každých 14 minut<br>
             • RealDebrid streaming s direct links<br>
-            • Podpora pro 1080p a 720p rozlišení<br>
-            • Každý uživatel má svou vlastní konfiguraci
+            • Podpora pro 1080p a 720p rozlišení
         </div>
     </div>
-
-    <script>
-        function generatePersonalUrl() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            const statusDiv = document.getElementById('apiStatus');
-            
-            if (!apiKey) {
-                statusDiv.innerHTML = '<div class="alert alert-danger">⚠️ Vložte prosím API klíč</div>';
-                return;
-            }
-            
-            statusDiv.innerHTML = '<div class="alert alert-info">🔄 Ověřuji API klíč...</div>';
-            
-            // Použijeme náš server pro test API klíče (obchází CORS problémy)
-            fetch('/test-api/' + btoa(apiKey), {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    statusDiv.innerHTML = '<div class="alert alert-success">✅ API klíč ověřen! Uživatel: ' + data.user + '</div>';
-                    
-                    const personalManifestUrl = window.location.origin + '/manifest/' + btoa(apiKey) + '.json';
-                    document.getElementById('manifestUrl').textContent = personalManifestUrl;
-                    document.getElementById('personalUrl').style.display = 'block';
-                    
-                    window.generatedManifestUrl = personalManifestUrl;
-                } else {
-                    throw new Error(data.error || 'Neplatný API klíč');
-                }
-            })
-            .catch(err => {
-                console.error('Error:', err);
-                statusDiv.innerHTML = '<div class="alert alert-danger">❌ ' + err.message + '<br><small>Tip: Zkontrolujte API klíč na real-debrid.com/apitoken</small></div>';
-            });
-        }
-
-        function installToStremio() {
-            if (window.generatedManifestUrl) {
-                const stremioUrl = 'stremio://' + window.generatedManifestUrl.replace('https://', '').replace('http://', '');
-                window.open(stremioUrl, '_blank');
-            }
-        }
-
-        document.getElementById('apiKey').focus();
-    </script>
 </body>
 </html>`);
 });
 
-app.get('/manifest/:encodedApiKey.json', (req, res) => {
-    try {
-        const encodedApiKey = req.params.encodedApiKey;
-        const apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
-        
-        if (!apiKey || apiKey.length < 20) {
-            return res.status(400).json({ error: 'Neplatný API klíč' });
-        }
-        
-        const configWithApiKey = {
-            ...ADDON_CONFIG,
-            id: ADDON_CONFIG.id + '.' + encodedApiKey.substring(0, 8),
-            catalogs: ADDON_CONFIG.catalogs.map(catalog => ({
-                ...catalog,
-                extra: [{ name: 'apiKey', options: [encodedApiKey] }]
-            }))
-        };
-        
-        res.json(configWithApiKey);
-    } catch (error) {
-        res.status(400).json({ error: 'Chyba při dekódování API klíče' });
-    }
-});
+app.get('/manifest.json', (req, res) => res.json(ADDON_CONFIG));
 
 app.get('/catalog/:type/:id.json', async (req, res) => {
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
-            const encodedApiKey = req.query.apiKey || '';
+            
+            const metas = animeList.map(anime => ({
+                id: anime.id,
+                type: 'series',
+                name: anime.name,
+                poster: anime.poster,
+                background: anime.background,
+                description: `Epizoda ${anime.episode} - ${anime.releaseInfo}`,
+                genres: ['Anime'],
+                year: new Date().getFullYear(),
+                imdbRating: 8.0,
+                releaseInfo: anime.releaseInfo
+            }));
+
+            res.json({ metas });
+        } else {
+            res.json({ metas: [] });
+        }
+    } catch (error) {
+        res.status(500).json({ 
+            metas: [],
+            error: 'Chyba při načítání katalogu'
+        });
+    }
+});
+
+app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
+    try {
+        if (req.params.id === 'subsplease_today') {
+            const animeList = await getTodayAnime();
             
             const metas = animeList.map(anime => ({
                 id: anime.id,
@@ -612,7 +521,6 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
 app.get('/meta/:type/:id.json', async (req, res) => {
     try {
         const animeId = req.params.id;
-        const encodedApiKey = req.query.apiKey || '';
         
         if (animeId.startsWith('subsplease:')) {
             const animeList = await getTodayAnime();
@@ -656,31 +564,6 @@ app.get('/meta/:type/:id.json', async (req, res) => {
 app.get('/stream/:type/:id.json', async (req, res) => {
     try {
         const videoId = req.params.id;
-        const encodedApiKey = req.query.apiKey;
-        
-        if (!encodedApiKey) {
-            return res.json({ 
-                streams: [{ 
-                    name: '🔑 API klíč chybí', 
-                    title: 'Vraťte se na hlavní stránku a vygenerujte novou URL',
-                    url: req.protocol + '://' + req.get('host')
-                }] 
-            });
-        }
-        
-        let apiKey;
-        try {
-            apiKey = Buffer.from(encodedApiKey, 'base64').toString('utf-8');
-        } catch (error) {
-            return res.json({ 
-                streams: [{ 
-                    name: '🔑 Neplatný API klíč', 
-                    title: 'Chyba při dekódování API klíče',
-                    url: req.protocol + '://' + req.get('host')
-                }] 
-            });
-        }
-        
         const parts = videoId.split(':');
         const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId;
         
@@ -691,10 +574,10 @@ app.get('/stream/:type/:id.json', async (req, res) => {
             if (anime) {
                 const streams = [];
                 
-                if (!apiKey || apiKey.length < 20) {
+                if (!REAL_DEBRID_API_KEY) {
                     streams.push({
-                        name: '🔑 Neplatný API klíč',
-                        title: 'Vraťte se na hlavní stránku a vygenerujte novou URL',
+                        name: '🔑 RealDebrid vyžadován',
+                        title: 'Kontaktujte administrátora pro nastavení RealDebrid API',
                         url: req.protocol + '://' + req.get('host')
                     });
                 } else {
@@ -705,9 +588,9 @@ app.get('/stream/:type/:id.json', async (req, res) => {
                         
                         for (const magnet of magnetLinks) {
                             try {
-                                const rdResponse = await addMagnetToRealDebrid(magnet.magnet, apiKey);
+                                const rdResponse = await addMagnetToRealDebrid(magnet.magnet);
                                 if (rdResponse?.id) {
-                                    const streamUrl = await getRealDebridStreamUrl(rdResponse.id, apiKey);
+                                    const streamUrl = await getRealDebridStreamUrl(rdResponse.id);
                                     
                                     if (streamUrl) {
                                         streams.push({
@@ -768,33 +651,11 @@ app.get('/stream/:type/:id.json', async (req, res) => {
     }
 });
 
-app.get('/test-api/:apiKey', async (req, res) => {
-    try {
-        const apiKey = Buffer.from(req.params.apiKey, 'base64').toString('utf-8');
-        
-        const response = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            timeout: 10000
-        });
-        
-        res.json({
-            success: true,
-            user: response.data.username,
-            message: 'API klíč funguje správně'
-        });
-    } catch (error) {
-        res.status(400).json({
-            success: false,
-            error: error.response?.status === 401 ? 'Neplatný API klíč' : 'Chyba API',
-            details: error.message
-        });
-    }
-});
-
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
+        realDebridConfigured: !!REAL_DEBRID_API_KEY,
         cacheSize: animeCache.data.length,
         cacheAge: Date.now() - animeCache.timestamp
     });
@@ -803,5 +664,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
     console.log(`⏰ Cache interval: 14 minut`);
-    console.log(`🌍 Veřejně dostupný addon s osobními API klíči`);
+    console.log(`🔑 RealDebrid API klíč:`, REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
 });
