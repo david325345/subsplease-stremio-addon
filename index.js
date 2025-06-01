@@ -1,4 +1,89 @@
-const express = require('express');
+async function getTodayAnime() {
+    const now = Date.now();
+    if (animeCache.data.length > 0 && (now - animeCache.timestamp) < animeCache.ttl) {
+        console.log(`📦 Používám cache data (${animeCache.data.length} anime)`);
+        return animeCache.data;
+    }
+    
+    console.log('🔄 Načítám fresh data...');
+    
+    try {
+        // Načteme anime z obou zdrojů paralelně
+        const [subsPleaseAnime, eraiRawsAnime] = await Promise.all([
+            getSubsPleaseAnime(),
+            getEraiRawsAnime()
+        ]);
+        
+        // Spojíme všechna anime
+        const allAnime = [...subsPleaseAnime, ...eraiRawsAnime];
+        
+        console.log(`📊 Načteno ${subsPleaseAnime.length} anime z SubsPlease, ${eraiRawsAnime.length} z Erai-raws`);
+        
+        // Vždy vrátíme nějaká data, i když jsou to fallback data
+        if (allAnime.length === 0) {
+            console.log('⚠️ Žádná data z žádného zdroje, vytvářím demo data...');
+            return [{
+                id: 'demo:' + Buffer.from('Demo Anime-1').toString('base64'),
+                name: 'Demo Anime',
+                episode: '1',
+                fullTitle: '[Demo] Demo Anime - 01 (1080p)',
+                poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Demo+Anime',
+                background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
+                releaseInfo: 'Demo',
+                type: 'series',
+                source: 'Demo',
+                qualities: new Map([['1080p', 'https://example.com/']])
+            }];
+        }
+
+        // Sekvenční načítání posterů s delšími pauzami pro lepší úspěšnost
+        const animeWithPosters = [];
+        
+        for (let i = 0; i < allAnime.length; i++) {
+            const anime = allAnime[i];
+            
+            console.log(`📸 Zpracovávám ${i + 1}/${allAnime.length}: ${anime.name}`);
+            
+            // Pokud už má fallback poster, zkusíme načíst lepší
+            let images;
+            if (anime.poster && anime.poster.includes('placeholder')) {
+                console.log(`🖼️ Načítám poster pro: ${anime.name}`);
+                try {
+                    images = await getAnimePoster(anime.name);
+                    
+                    // Ověříme že jsme dostali skutečný poster
+                    if (images.poster && images.poster.includes('myanimelist.net')) {
+                        console.log(`✅ Úspěšně načten poster pro: ${anime.name}`);
+                    } else {
+                        console.log(`⚠️ Fallback poster pro: ${anime.name}`);
+                    }
+                    
+                } catch (error) {
+                    console.log(`❌ Chyba při načítání posteru pro ${anime.name}:`, error.message);
+                    // Použijeme původní fallback
+                    images = {
+                        poster: anime.poster,
+                        background: anime.background
+                    };
+                }
+            } else {
+                // Už má poster nebo je to demo
+                images = {
+                    poster: anime.poster || 'https://via.placeholder.com/300x400/2c3e50/ffffff?text=No+Image',
+                    background: anime.background || 'https://via.placeholder.com/1920x1080/2c3e50/ffffff?text=No+Image'
+                };
+            }
+            
+            animeWithPosters.push({
+                ...anime,
+                poster: images.poster,
+                background: images.background
+            });
+            
+            // Delší pauza mezi požadavky pro vyhnutí se rate limitingu
+            if (i < allAnime.length - 1) {
+                const delay = 1500 + Math.random() * 1000; // 1.5-2.5 sekund
+                console.log(`⏳ Čekám ${Mathconst express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
@@ -141,60 +226,99 @@ async function getAnimePoster(animeName) {
             'Shirohiyo': 'Shiro Hiyoko',
             'Shirobuta Kizoku desu ga Zense no Kioku ga Haeta node Hiyoko na Otouto Sodatemasu': 'Shiro Hiyoko',
             'Gorilla no Kami kara Kago sareta Reijou wa Ouritsu Kishidan de Kawaigarareru': 'Gorilla no Kami',
-            'Kanchigai no Atelier Meister: Eiyuu Party no Moto Zatsuyougakari ga': 'Kanchigai no Atelier Meister'
+            'Kanchigai no Atelier Meister: Eiyuu Party no Moto Zatsuyougakari ga, Jitsu wa Sentou Igai ga SSS Rank Datta to Iu Yoku Aru Hanashi': 'Kanchigai no Atelier Meister',
+            'A-Rank Party wo Ridatsu shita Ore wa, Moto Oshiego-tachi to Meikyuu Shinbu wo Mezasu': 'A-Rank Party wo Ridatsu',
+            'Maebashi Witches': 'Maebashi Witches',
+            'Honor of Kings': 'Wang Zhe Rongyao',
+            'To Be Hero X': 'To Be Hero X',
+            'Witch Watch': 'Witch Watch',
+            'Lazarus': 'Lazarus',
+            'Classic Stars': 'Classic Stars'
         };
         
         // Použijeme mapování pokud existuje
         let searchName = specialMappings[animeName] || animeName;
         
-        // Vyčistíme název pro lepší vyhledávání
+        // Agresivnější čištění názvu
         searchName = searchName
-            .replace(/[^\w\s\-]/g, ' ')  // Odstraníme speciální znaky kromě pomlček
-            .replace(/\s+/g, ' ')        // Nahradíme více mezer jednou
+            .replace(/\([^)]*\)/g, '') // Odstraníme vše v závorkách
+            .replace(/\[[^\]]*\]/g, '') // Odstraníme vše v hranatých závorkách
+            .replace(/[^\w\s\-']/g, ' ') // Odstraníme speciální znaky kromě pomlček a apostrofů
+            .replace(/\s+/g, ' ')       // Nahradíme více mezer jednou
+            .replace(/\s*-\s*\d+.*$/, '') // Odstraníme číslo epizody a vše za ním
             .trim();
         
+        // Pokud je název moc krátký, použijeme původní
+        if (searchName.length < 3) {
+            searchName = animeName.substring(0, 20);
+        }
+        
         const searchQuery = encodeURIComponent(searchName);
-        const searchUrl = `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=1&order_by=popularity`;
+        
+        // Zkusíme více různých API přístupů
+        const apiUrls = [
+            `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=1&order_by=popularity`,
+            `https://api.jikan.moe/v4/anime?q=${searchQuery}&limit=1&order_by=score`,
+            `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(animeName.split(' ')[0])}&limit=1&order_by=popularity`
+        ];
         
         console.log(`🖼️ Hledám poster pro: "${animeName}" -> "${searchName}"`);
         
-        // Rychlejší approach - pouze jeden požadavek s populárním výsledkem
-        const response = await axios.get(searchUrl, { 
-            timeout: 8000,  // Kratší timeout
-            headers: {
-                'User-Agent': 'SubsPlease-Erai-Stremio-Addon/1.0'
-            }
-        });
-        
-        if (response.data && response.data.data && response.data.data.length > 0) {
-            const anime = response.data.data[0];
-            const images = anime.images?.jpg;
-            const posterUrl = images?.large_image_url || images?.image_url;
-            
-            if (posterUrl) {
-                console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
-                return {
-                    poster: posterUrl,
-                    background: posterUrl
-                };
+        for (let i = 0; i < apiUrls.length; i++) {
+            try {
+                console.log(`🔍 Pokus ${i + 1}/3: ${apiUrls[i]}`);
+                
+                const response = await axios.get(apiUrls[i], { 
+                    timeout: 6000,
+                    headers: {
+                        'User-Agent': 'SubsPlease-Erai-Stremio-Addon/1.0',
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.data && response.data.data && response.data.data.length > 0) {
+                    const anime = response.data.data[0];
+                    const images = anime.images?.jpg;
+                    const posterUrl = images?.large_image_url || images?.image_url;
+                    
+                    if (posterUrl && posterUrl.includes('myanimelist.net')) {
+                        console.log(`✅ Poster nalezen pro "${animeName}": ${posterUrl}`);
+                        return {
+                            poster: posterUrl,
+                            background: posterUrl
+                        };
+                    }
+                }
+                
+                // Malé zpoždění mezi pokusy
+                if (i < apiUrls.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+            } catch (error) {
+                if (error.response?.status === 429) {
+                    console.log(`⏳ Rate limit na pokusu ${i + 1} pro "${animeName}"`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                    console.log(`❌ Pokus ${i + 1} selhal pro "${animeName}":`, error.message);
+                }
             }
         }
         
         console.log(`⚠️ Poster nenalezen pro "${animeName}", používám fallback`);
         
     } catch (error) {
-        if (error.response?.status === 429) {
-            console.log(`⏳ Rate limit pro "${animeName}"`);
-        } else {
-            console.log(`❌ Chyba při hledání posteru pro "${animeName}":`, error.message);
-        }
+        console.log(`❌ Obecná chyba pro "${animeName}":`, error.message);
     }
     
-    // Rychlý fallback poster
-    const fallbackColor = animeName.includes('SubsPlease') ? '1a1a2e' : '764ba2';
+    // Vylepšený fallback poster s názvem anime
+    const shortName = animeName.length > 15 ? animeName.substring(0, 12) + '...' : animeName;
+    const encodedName = encodeURIComponent(shortName);
+    const fallbackColor = '2c3e50';
+    
     return {
-        poster: `https://via.placeholder.com/300x400/${fallbackColor}/ffffff?text=${encodeURIComponent(animeName.substring(0, 20))}`,
-        background: `https://via.placeholder.com/1920x1080/${fallbackColor}/ffffff?text=${encodeURIComponent(animeName.substring(0, 30))}`
+        poster: `https://via.placeholder.com/300x400/${fallbackColor}/ffffff?text=${encodedName}`,
+        background: `https://via.placeholder.com/1920x1080/${fallbackColor}/ffffff?text=${encodedName}`
     };
 }
 
@@ -531,62 +655,55 @@ async function getTodayAnime() {
             }];
         }
 
-        // Rychlejší načítání posterů - paralelně ve skupinách
+        // Sekvenční načítání posterů s delšími pauzami pro lepší úspěšnost
         const animeWithPosters = [];
-        const batchSize = 3; // Načteme 3 postery současně
         
-        for (let i = 0; i < allAnime.length; i += batchSize) {
-            const batch = allAnime.slice(i, i + batchSize);
+        for (let i = 0; i < allAnime.length; i++) {
+            const anime = allAnime[i];
             
-            const batchPromises = batch.map(async (anime) => {
-                // Pokud už má fallback poster, načteme lepší
-                let images;
-                if (anime.poster && anime.poster.includes('placeholder')) {
-                    console.log(`🖼️ Načítám poster pro: ${anime.name}`);
-                    try {
-                        images = await getAnimePoster(anime.name);
-                    } catch (error) {
-                        console.log(`❌ Chyba při načítání posteru pro ${anime.name}:`, error.message);
-                        images = {
-                            poster: anime.poster,
-                            background: anime.background
-                        };
+            console.log(`📸 Zpracovávám ${i + 1}/${allAnime.length}: ${anime.name}`);
+            
+            // Pokud už má fallback poster, zkusíme načíst lepší
+            let images;
+            if (anime.poster && anime.poster.includes('placeholder')) {
+                console.log(`🖼️ Načítám poster pro: ${anime.name}`);
+                try {
+                    images = await getAnimePoster(anime.name);
+                    
+                    // Ověříme že jsme dostali skutečný poster
+                    if (images.poster && images.poster.includes('myanimelist.net')) {
+                        console.log(`✅ Úspěšně načten poster pro: ${anime.name}`);
+                    } else {
+                        console.log(`⚠️ Fallback poster pro: ${anime.name}`);
                     }
-                } else {
-                    // Už má poster nebo je to demo
+                    
+                } catch (error) {
+                    console.log(`❌ Chyba při načítání posteru pro ${anime.name}:`, error.message);
+                    // Použijeme původní fallback
                     images = {
-                        poster: anime.poster || 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Anime',
-                        background: anime.background || 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Anime'
+                        poster: anime.poster,
+                        background: anime.background
                     };
                 }
-                
-                return {
-                    ...anime,
-                    poster: images.poster,
-                    background: images.background
+            } else {
+                // Už má poster nebo je to demo
+                images = {
+                    poster: anime.poster || 'https://via.placeholder.com/300x400/2c3e50/ffffff?text=No+Image',
+                    background: anime.background || 'https://via.placeholder.com/1920x1080/2c3e50/ffffff?text=No+Image'
                 };
+            }
+            
+            animeWithPosters.push({
+                ...anime,
+                poster: images.poster,
+                background: images.background
             });
             
-            // Zpracujeme batch paralelně
-            const batchResults = await Promise.allSettled(batchPromises);
-            
-            batchResults.forEach((result, index) => {
-                if (result.status === 'fulfilled') {
-                    animeWithPosters.push(result.value);
-                } else {
-                    // Fallback pokud se batch nepodaří
-                    const originalAnime = batch[index];
-                    animeWithPosters.push({
-                        ...originalAnime,
-                        poster: originalAnime.poster || 'https://via.placeholder.com/300x400/e74c3c/ffffff?text=Error',
-                        background: originalAnime.background || 'https://via.placeholder.com/1920x1080/e74c3c/ffffff?text=Error'
-                    });
-                }
-            });
-            
-            // Malé zpoždění mezi batchi pro rate limiting
-            if (i + batchSize < allAnime.length) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+            // Delší pauza mezi požadavky pro vyhnutí se rate limitingu
+            if (i < allAnime.length - 1) {
+                const delay = 1500 + Math.random() * 1000; // 1.5-2.5 sekund
+                console.log(`⏳ Čekám ${Math.round(delay)}ms před dalším posterem...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
 
@@ -594,6 +711,14 @@ async function getTodayAnime() {
         animeCache.timestamp = now;
         
         console.log(`✅ Cache aktualizována s ${animeWithPosters.length} anime`);
+        
+        // Spočítáme úspěšnost načítání posterů
+        const successfulPosters = animeWithPosters.filter(anime => 
+            anime.poster && anime.poster.includes('myanimelist.net')
+        ).length;
+        
+        console.log(`📊 Úspěšnost posterů: ${successfulPosters}/${animeWithPosters.length} (${Math.round(successfulPosters/animeWithPosters.length*100)}%)`);
+        
         return animeWithPosters;
         
     } catch (error) {
@@ -644,76 +769,147 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
             }
         }
         
-        // Pro Erai-raws - konvertujeme torrent URL na magnet
-        if (targetUrl && anime.source === 'Erai-raws') {
+        // Pro Erai-raws - použijeme Nyaa API
+        if (anime.source === 'Erai-raws') {
             try {
-                console.log(`🦄 Načítám Erai-raws torrent: ${targetUrl}`);
+                console.log(`🦄 Hledám Erai-raws na Nyaa: ${anime.name} - ${anime.episode}`);
                 
-                const torrentResponse = await axios.get(targetUrl, {
-                    timeout: 15000,
-                    headers: { 
+                // Vytvoříme search query pro Nyaa API
+                const searchQuery = `[Erai-raws] ${anime.name} - ${anime.episode}`;
+                const encodedQuery = encodeURIComponent(searchQuery);
+                
+                // Nyaa API endpoint
+                const nyaaApiUrl = `https://nyaa.si/api/info?query=${encodedQuery}&category=1_2&sort=id&order=desc&limit=5`;
+                
+                console.log(`📡 Nyaa API: ${nyaaApiUrl}`);
+                
+                const nyaaResponse = await axios.get(nyaaApiUrl, {
+                    timeout: 10000,
+                    headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Accept': 'application/x-bittorrent'
-                    },
-                    responseType: 'arraybuffer',
-                    maxRedirects: 5
+                        'Accept': 'application/json'
+                    }
                 });
                 
-                // Parsujeme torrent soubor pro získání info hash
-                const torrentBuffer = Buffer.from(torrentResponse.data);
+                if (nyaaResponse.data && Array.isArray(nyaaResponse.data) && nyaaResponse.data.length > 0) {
+                    // Najdeme nejlepší shodu
+                    for (const torrent of nyaaResponse.data) {
+                        const torrentName = torrent.name || '';
+                        
+                        // Kontrola shody názvu a epizody
+                        if (torrentName.toLowerCase().includes(anime.name.toLowerCase()) && 
+                            torrentName.includes(anime.episode) &&
+                            torrentName.includes('1080p')) {
+                            
+                            const magnetUrl = torrent.magnet;
+                            if (magnetUrl && magnetUrl.startsWith('magnet:')) {
+                                console.log(`✅ Erai-raws magnet nalezen přes Nyaa API: ${torrent.name}`);
+                                return [{
+                                    magnet: magnetUrl,
+                                    quality: '1080p',
+                                    title: `[Erai-raws] ${anime.name} - ${anime.episode} (1080p) [Nyaa]`
+                                }];
+                            }
+                        }
+                    }
+                }
                 
-                // Jednoduchý parser pro získání info hash z torrent souboru
-                const torrentString = torrentBuffer.toString('binary');
-                const infoStart = torrentString.indexOf('4:info');
+                // Pokud Nyaa API nevrátí výsledky, zkusíme obecnější hledání
+                const generalQuery = encodeURIComponent(`Erai-raws ${anime.name.split(' ')[0]}`);
+                const generalUrl = `https://nyaa.si/api/info?query=${generalQuery}&category=1_2&sort=id&order=desc&limit=10`;
                 
-                if (infoStart !== -1) {
-                    // Extrahujeme info sekci a vytvoříme hash
+                const generalResponse = await axios.get(generalUrl, {
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (generalResponse.data && Array.isArray(generalResponse.data) && generalResponse.data.length > 0) {
+                    for (const torrent of generalResponse.data) {
+                        const torrentName = torrent.name || '';
+                        
+                        if (torrentName.toLowerCase().includes(anime.name.toLowerCase()) && 
+                            torrentName.includes(anime.episode)) {
+                            
+                            const magnetUrl = torrent.magnet;
+                            if (magnetUrl && magnetUrl.startsWith('magnet:')) {
+                                console.log(`✅ Erai-raws magnet nalezen (obecné hledání): ${torrent.name}`);
+                                return [{
+                                    magnet: magnetUrl,
+                                    quality: '1080p',
+                                    title: `[Erai-raws] ${anime.name} - ${anime.episode} (1080p) [Nyaa General]`
+                                }];
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`⚠️ Nyaa API nevrátilo výsledky pro ${anime.name} - ${anime.episode}`);
+                
+            } catch (nyaaError) {
+                console.log(`❌ Chyba při volání Nyaa API: ${nyaaError.message}`);
+            }
+            
+            // Fallback - zkusíme přímý torrent link z Erai-raws
+            if (targetUrl) {
+                try {
+                    console.log(`🔄 Fallback: Parsování Erai-raws torrenta: ${targetUrl}`);
+                    
+                    const torrentResponse = await axios.get(targetUrl, {
+                        timeout: 15000,
+                        headers: { 
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Accept': 'application/x-bittorrent'
+                        },
+                        responseType: 'arraybuffer',
+                        maxRedirects: 5
+                    });
+                    
+                    // Základní torrent parsing
+                    const torrentBuffer = Buffer.from(torrentResponse.data);
+                    const torrentString = torrentBuffer.toString('binary');
+                    
+                    // Hledáme info hash
                     const crypto = require('crypto');
-                    const infoDict = torrentString.substring(infoStart + 6);
-                    const infoEnd = infoDict.indexOf('e') + 1;
-                    const infoSection = infoDict.substring(0, infoEnd);
-                    const hash = crypto.createHash('sha1').update(Buffer.from(infoSection, 'binary')).digest('hex');
+                    const hash = crypto.createHash('sha1').update(torrentBuffer).digest('hex');
                     
-                    const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[Erai-raws] ${anime.name} - ${anime.episode} [1080p]`)}&tr=http://nyaa.tracker.wf:7777/announce&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
+                    const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[Erai-raws] ${anime.name} - ${anime.episode} [1080p]`)}&tr=http://nyaa.tracker.wf:7777/announce&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://tracker.leechers-paradise.org:6969/announce`;
                     
-                    console.log(`✅ Erai-raws magnet vytvořen: ${hash}`);
+                    console.log(`✅ Erai-raws magnet vytvořen z torrenta`);
                     
                     return [{
                         magnet: magnetUrl,
-                        quality: quality,
-                        title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`
+                        quality: '1080p',
+                        title: `[Erai-raws] ${anime.name} - ${anime.episode} (1080p) [Direct]`
                     }];
+                    
+                } catch (torrentError) {
+                    console.log(`❌ Chyba při parsování torrenta: ${torrentError.message}`);
                 }
-            } catch (torrentError) {
-                console.log(`❌ Chyba při parsování Erai-raws torrenta: ${torrentError.message}`);
-                
-                // Fallback - vytvoříme magnet z URL hash
-                const urlHash = require('crypto').createHash('md5').update(targetUrl).digest('hex').substring(0, 40).padEnd(40, '0');
-                const magnetUrl = `magnet:?xt=urn:btih:${urlHash}&dn=${encodeURIComponent(`[Erai-raws] ${anime.name} - ${anime.episode} [1080p]`)}&tr=http://nyaa.tracker.wf:7777/announce&tr=udp://tracker.coppersurfer.tk:6969/announce`;
-                
-                return [{
-                    magnet: magnetUrl,
-                    quality: quality,
-                    title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality}) [Fallback]`
-                }];
             }
         }
 
-        // Fallback magnet pro případy, kdy se nepodaří získat skutečný
-        const hash = anime.fullTitle?.match(/\[([A-F0-9]{8})\]/)?.[1]?.padEnd(40, '0') || 
-                     require('crypto').createHash('md5').update(anime.fullTitle || anime.name).digest('hex').substring(0, 40);
-        const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`)}&tr=http://nyaa.tracker.wf:7777/announce&tr=udp://tracker.coppersurfer.tk:6969/announce`;
+        // Fallback magnet pro všechny ostatní případy
+        console.log(`🔄 Vytvářím fallback magnet pro ${anime.name} - ${anime.episode}`);
+        
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(`${anime.name}${anime.episode}${anime.source}`).digest('hex').substring(0, 40);
+        const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[${anime.source}] ${anime.name} - ${anime.episode} (${quality})`)}&tr=http://nyaa.tracker.wf:7777/announce&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
         
         return [{
             magnet: magnetUrl,
             quality: quality,
-            title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality}) [Generated]`
+            title: `[${anime.source}] ${anime.name} - ${anime.episode} (${quality}) [Fallback]`
         }];
+        
     } catch (error) {
         console.log(`❌ Chyba při získávání magnet linků: ${error.message}`);
         
         // Emergency fallback
-        const hash = require('crypto').createHash('md5').update(anime.name + anime.episode).digest('hex').substring(0, 40);
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(`${anime.name}${anime.episode}`).digest('hex').substring(0, 40);
         const magnetUrl = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(`[${anime.source}] ${anime.name} - ${anime.episode}`)}&tr=http://nyaa.tracker.wf:7777/announce`;
         
         return [{
