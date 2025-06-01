@@ -1,0 +1,28 @@
+{
+  "name": "subsplease-stremio-addon",
+  "version": "1.0.0",
+  "description": "SubsPlease Stremio addon pro dnešní anime s RealDebrid podporou",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5"
+  },
+  "keywords": [
+    "stremio",
+    "addon",
+    "anime",
+    "subsplease",
+    "realdebrid"
+  ],
+  "author": "SubsPlease Addon",
+  "license": "MIT"
+}
