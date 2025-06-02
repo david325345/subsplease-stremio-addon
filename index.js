@@ -342,17 +342,44 @@ async function getTodayAnime() {
         
         let animeList = Array.from(animeMap.values());
         
-        // Pokud nemáme dnešní anime, vytvoříme demo data
+        // Kontrola, zda máme dnešní anime
+        const todayAnime = animeList.filter(anime => anime.isToday);
+        console.log(`📅 Dnešní anime: ${todayAnime.length}, Včerejší: ${animeList.length - todayAnime.length}`);
+        
+        // Pokud nemáme žádné dnešní anime, přidáme "Waiting" položku
+        if (todayAnime.length === 0) {
+            console.log('⏳ Žádné dnešní anime, přidávám Waiting položku');
+            
+            const waitingItem = {
+                id: 'subsplease:' + Buffer.from('Waiting-Today').toString('base64'),
+                name: '⏳ Waiting for today\'s releases...',
+                episode: '',
+                fullTitle: 'Čekáme na dnešní vydání anime',
+                poster: 'https://via.placeholder.com/300x400/6c757d/ffffff?text=⏳+Waiting',
+                background: 'https://via.placeholder.com/1920x1080/6c757d/ffffff?text=Waiting+for+releases',
+                releaseInfo: new Date().toLocaleDateString('cs-CZ'),
+                type: 'series',
+                pubDate: new Date().toISOString(),
+                qualities: new Map(),
+                isToday: true,
+                isWaiting: true
+            };
+            
+            // Přidáme Waiting na začátek, pak včerejší anime
+            animeList = [waitingItem, ...animeList];
+        }
+        
+        // Pokud nemáme vůbec žádné anime, vytvoříme demo data
         if (animeList.length === 0) {
-            console.log('⚠️ Žádné dnešní anime nenalezeno, používám demo data');
+            console.log('⚠️ Žádné anime nenalezeno, používám demo data');
             animeList = [
                 {
                     id: 'subsplease:' + Buffer.from('Demo Anime-1').toString('base64'),
-                    name: 'Demo Anime - Žádné dnešní vydání',
+                    name: 'Demo Anime - RSS Error',
                     episode: '1',
                     fullTitle: '[SubsPlease] Demo Anime - 01 (1080p)',
-                    poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Žádné+anime+dnes',
-                    background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
+                    poster: 'https://via.placeholder.com/300x400/dc3545/ffffff?text=RSS+Error',
+                    background: 'https://via.placeholder.com/1920x1080/dc3545/ffffff?text=RSS+Error',
                     releaseInfo: new Date().toLocaleDateString('cs-CZ'),
                     type: 'series',
                     pubDate: new Date().toISOString(),
@@ -360,12 +387,18 @@ async function getTodayAnime() {
                 }
             ];
         } else {
-            // Načteme postery postupně s malým zpožděním
+            // Načteme postery postupně s malým zpožděním (kromě Waiting položky)
             console.log('🖼️ Načítám postery...');
             const animeWithPosters = [];
             
             for (let i = 0; i < animeList.length; i++) {
                 const anime = animeList[i];
+                
+                // Přeskočíme poster loading pro Waiting položku
+                if (anime.isWaiting) {
+                    animeWithPosters.push(anime);
+                    continue;
+                }
                 
                 // Malé zpoždění mezi požadavky (200-500ms)
                 if (i > 0) {
@@ -661,29 +694,56 @@ app.get('/meta/:type/:id.json', async (req, res) => {
             const anime = animeList.find(a => a.id === animeId);
             
             if (anime) {
-                sendJsonWithCors(res, {
-                    meta: {
-                        id: anime.id,
-                        type: 'series',
-                        name: anime.name,
-                        poster: anime.poster,
-                        background: anime.background,
-                        description: `${anime.fullTitle}\n\nVydáno: ${anime.releaseInfo}`,
-                        releaseInfo: anime.releaseInfo,
-                        year: new Date().getFullYear(),
-                        imdbRating: 8.0,
-                        genres: ['Anime'],
-                        videos: [{
-                            id: `${anime.id}:1:${anime.episode}`,
-                            title: `Epizoda ${anime.episode}`,
-                            season: 1,
-                            episode: parseInt(anime.episode),
-                            released: anime.pubDate ? new Date(anime.pubDate) : new Date(),
-                            overview: anime.fullTitle,
-                            thumbnail: anime.poster
-                        }]
-                    }
-                });
+                // Speciální handling pro Waiting položku
+                if (anime.isWaiting) {
+                    sendJsonWithCors(res, {
+                        meta: {
+                            id: anime.id,
+                            type: 'series',
+                            name: anime.name,
+                            poster: anime.poster,
+                            background: anime.background,
+                            description: `Dnes ještě nevyšlo žádné nové anime ze SubsPlease.\n\nČekáme na vydání... Zkontrolujte později!`,
+                            releaseInfo: anime.releaseInfo,
+                            year: new Date().getFullYear(),
+                            imdbRating: 0,
+                            genres: ['Anime', 'Waiting'],
+                            videos: [{
+                                id: `${anime.id}:1:0`,
+                                title: 'Čekáme na vydání...',
+                                season: 1,
+                                episode: 0,
+                                released: new Date(),
+                                overview: 'Dnes ještě nevyšlo žádné anime',
+                                thumbnail: anime.poster
+                            }]
+                        }
+                    });
+                } else {
+                    sendJsonWithCors(res, {
+                        meta: {
+                            id: anime.id,
+                            type: 'series',
+                            name: anime.name,
+                            poster: anime.poster,
+                            background: anime.background,
+                            description: `${anime.fullTitle}\n\nVydáno: ${anime.releaseInfo}`,
+                            releaseInfo: anime.releaseInfo,
+                            year: new Date().getFullYear(),
+                            imdbRating: 8.0,
+                            genres: ['Anime'],
+                            videos: [{
+                                id: `${anime.id}:1:${anime.episode}`,
+                                title: `Epizoda ${anime.episode}`,
+                                season: 1,
+                                episode: parseInt(anime.episode) || 1,
+                                released: anime.pubDate ? new Date(anime.pubDate) : new Date(),
+                                overview: anime.fullTitle,
+                                thumbnail: anime.poster
+                            }]
+                        }
+                    });
+                }
             } else {
                 sendJsonWithCors(res, { error: 'Anime nenalezeno' }, 404);
             }
@@ -708,7 +768,14 @@ app.get('/stream/:type/:id.json', async (req, res) => {
             if (anime) {
                 const streams = [];
                 
-                if (!REAL_DEBRID_API_KEY) {
+                // Speciální handling pro Waiting položku
+                if (anime.isWaiting) {
+                    streams.push({
+                        name: '⏳ Čekáme na vydání',
+                        title: 'Dnes ještě nevyšlo žádné anime ze SubsPlease',
+                        url: 'https://subsplease.org/schedule/'
+                    });
+                } else if (!REAL_DEBRID_API_KEY) {
                     streams.push({
                         name: '🔑 RealDebrid vyžadován',
                         title: 'Kontaktujte administrátora pro nastavení RealDebrid API',
