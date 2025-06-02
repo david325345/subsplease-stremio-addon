@@ -341,37 +341,38 @@ async function getTodayAnime() {
         
         console.log(`📅 Dnešní anime: ${todayAnime.length}, Včerejší: ${yesterdayAnime.length}`);
         
-        // Sestavíme finální seznam
-        let finalList = [];
-        
-        // Pokud máme dnešní anime, zobrazíme je
+        // Pokud debug mode, ukažeme detaily
         if (todayAnime.length > 0) {
-            console.log('✅ Máme dnešní anime, zobrazuji je');
-            finalList = [...todayAnime];
-        } else {
-            // Pokud nemáme dnešní anime, přidáme "Waiting" položku
-            console.log('⏳ Žádné dnešní anime, přidávám Waiting položku');
-            
-            const waitingItem = {
-                id: 'subsplease:' + Buffer.from('Waiting-Today').toString('base64'),
-                name: '⏳ Waiting for today\'s releases...',
-                episode: '',
-                fullTitle: 'Čekáme na dnešní vydání anime',
-                poster: 'https://cdn-icons-png.flaticon.com/512/2972/2972531.png',
-                background: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=1920&h=1080&fit=crop',
-                releaseInfo: new Date().toLocaleDateString('cs-CZ'),
-                type: 'series',
-                pubDate: new Date().toISOString(),
-                qualities: new Map(),
-                isToday: true,
-                isWaiting: true
-            };
-            
-            finalList.push(waitingItem);
+            todayAnime.forEach(anime => {
+                console.log(`🔍 DNEŠNÍ: ${anime.name} - ${anime.episode}`);
+            });
+        }
+        if (yesterdayAnime.length > 0) {
+            yesterdayAnime.forEach(anime => {
+                console.log(`🔍 VČEREJŠÍ: ${anime.name} - ${anime.episode}`);
+            });
         }
         
-        // Přidáme header pro včerejší anime (pokud existují)
-        if (yesterdayAnime.length > 0) {
+        // Sestavíme finální seznam s prioritou a přesně 40 položek
+        let finalList = [];
+        
+        // Seřadíme dnešní anime podle času (nejnovější první)
+        const sortedTodayAnime = todayAnime.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+        // Seřadíme včerejší anime podle času (nejnovější první)
+        const sortedYesterdayAnime = yesterdayAnime.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+        
+        console.log(`📊 Sestavujem seznam: ${sortedTodayAnime.length} dnešních, ${sortedYesterdayAnime.length} včerejších`);
+        
+        // ČÁST 1: Dnešní anime mají vždy přednost
+        if (sortedTodayAnime.length > 0) {
+            console.log(`✅ Přidávám ${sortedTodayAnime.length} dnešních anime`);
+            finalList.push(...sortedTodayAnime);
+        }
+        
+        // ČÁST 2: Včerejší anime s headerem (doplníme do 40)
+        if (sortedYesterdayAnime.length > 0) {
+            console.log('📅 Přidávám header pro včerejší anime');
+            
             const yesterdayHeader = {
                 id: 'subsplease:' + Buffer.from('Yesterday-Header').toString('base64'),
                 name: '📅 Anime ze včera',
@@ -389,8 +390,52 @@ async function getTodayAnime() {
             };
             
             finalList.push(yesterdayHeader);
-            finalList.push(...yesterdayAnime);
+            
+            // Vypočítáme kolik včerejších anime můžeme přidat (39 - dnešní, protože header zabírá 1 místo)
+            const remainingSpace = 39 - sortedTodayAnime.length;
+            const yesterdayToAdd = sortedYesterdayAnime.slice(0, Math.max(0, remainingSpace));
+            console.log(`📅 Přidávám ${yesterdayToAdd.length} včerejších anime (místo: ${remainingSpace})`);
+            finalList.push(...yesterdayToAdd);
         }
+        
+        // ČÁST 3: Waiting pouze pokud NENÍ žádné dnešní anime
+        if (sortedTodayAnime.length === 0) {
+            console.log('⏳ Žádné dnešní anime - přidávám Waiting na začátek');
+            
+            const waitingItem = {
+                id: 'subsplease:' + Buffer.from('Waiting-Today').toString('base64'),
+                name: '⏳ Waiting for today\'s releases...',
+                episode: '',
+                fullTitle: 'Čekáme na dnešní vydání anime',
+                poster: 'https://cdn-icons-png.flaticon.com/512/2972/2972531.png',
+                background: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=1920&h=1080&fit=crop',
+                releaseInfo: new Date().toLocaleDateString('cs-CZ'),
+                type: 'series',
+                pubDate: new Date().toISOString(),
+                qualities: new Map(),
+                isToday: true,
+                isWaiting: true
+            };
+            
+            // Waiting na začátek, poté header a včerejší anime (celkem max 40)
+            finalList.unshift(waitingItem);
+            
+            // Přepočítáme místo pro včerejší anime (38 protože máme Waiting + header)
+            if (sortedYesterdayAnime.length > 0 && finalList.length < 40) {
+                const adjustedRemainingSpace = 38;
+                const adjustedYesterdayToAdd = sortedYesterdayAnime.slice(0, adjustedRemainingSpace);
+                console.log(`📅 (s Waiting) Upravuji včerejší anime na ${adjustedYesterdayToAdd.length} položek`);
+                
+                // Odstraníme starý včerejší seznam a přidáme nový s upraveným limitem
+                const headerIndex = finalList.findIndex(item => item.isHeader);
+                if (headerIndex >= 0) {
+                    finalList = finalList.slice(0, headerIndex + 1); // Zachováme jen do headeru
+                    finalList.push(...adjustedYesterdayToAdd);
+                }
+            }
+        }
+        
+        console.log(`📋 Finální seznam má ${finalList.length} položek`);
         
         animeList = finalList;
         
@@ -448,7 +493,7 @@ async function getTodayAnime() {
         animeCache.data = animeList;
         animeCache.timestamp = now;
         
-        console.log(`✅ Cache aktualizován s ${animeList.length} anime`);
+        console.log(`✅ Cache aktualizován s ${animeList.length} anime (max 40)`);
         return animeList;
         
     } catch (error) {
