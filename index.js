@@ -8,19 +8,23 @@ const app = express();
 // Úplně otevřené CORS pro maximální kompatibilitu
 app.use(cors({
     origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
+    methods: ['GET', 'POST', 'OPTIONS', 'HEAD', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['*'],
     credentials: false,
-    optionsSuccessStatus: 200
+    optionsSuccessStatus: 200,
+    preflightContinue: false
 }));
 
 // Middleware pro explicitní CORS hlavičky na všech responses
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD, PUT, PATCH, DELETE');
     res.header('Access-Control-Allow-Headers', '*');
     res.header('Access-Control-Max-Age', '86400');
+    res.header('X-Content-Type-Options', 'nosniff');
+    res.header('X-Frame-Options', 'SAMEORIGIN');
     
+    // Explicitní odpověď na preflight requests
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
@@ -355,8 +359,8 @@ async function getTodayAnime() {
                 name: '⏳ Waiting for today\'s releases...',
                 episode: '',
                 fullTitle: 'Čekáme na dnešní vydání anime',
-                poster: 'https://via.placeholder.com/300x400/6c757d/ffffff?text=⏳+Waiting',
-                background: 'https://via.placeholder.com/1920x1080/6c757d/ffffff?text=Waiting+for+releases',
+                poster: 'https://cdn-icons-png.flaticon.com/512/2972/2972531.png',
+                background: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=1920&h=1080&fit=crop',
                 releaseInfo: new Date().toLocaleDateString('cs-CZ'),
                 type: 'series',
                 pubDate: new Date().toISOString(),
@@ -365,8 +369,24 @@ async function getTodayAnime() {
                 isWaiting: true
             };
             
-            // Přidáme Waiting na začátek, pak včerejší anime
-            animeList = [waitingItem, ...animeList];
+            // Přidáme separátor pro včerejší anime
+            const yesterdayHeader = {
+                id: 'subsplease:' + Buffer.from('Yesterday-Header').toString('base64'),
+                name: '📅 Anime ze včera',
+                episode: '',
+                fullTitle: 'Včerejší vydání anime ze SubsPlease',
+                poster: 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png',
+                background: 'https://images.unsplash.com/photo-1547036967-23d11aacaee0?w=1920&h=1080&fit=crop',
+                releaseInfo: 'Včerejší vydání',
+                type: 'series',
+                pubDate: new Date(Date.now() - 24*60*60*1000).toISOString(),
+                qualities: new Map(),
+                isToday: false,
+                isHeader: true
+            };
+            
+            // Přidáme Waiting na začátek, pak header, pak včerejší anime
+            animeList = [waitingItem, yesterdayHeader, ...animeList];
         }
         
         // Pokud nemáme vůbec žádné anime, vytvoříme demo data
@@ -394,8 +414,8 @@ async function getTodayAnime() {
             for (let i = 0; i < animeList.length; i++) {
                 const anime = animeList[i];
                 
-                // Přeskočíme poster loading pro Waiting položku
-                if (anime.isWaiting) {
+                // Přeskočíme poster loading pro Waiting položku a header
+                if (anime.isWaiting || anime.isHeader) {
                     animeWithPosters.push(anime);
                     continue;
                 }
@@ -487,11 +507,16 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
     }
 }
 
-// Helper funkce pro JSON response s CORS
+// Helper funkce pro JSON response s maximálním CORS
 function sendJsonWithCors(res, data, status = 200) {
     res.status(status);
     res.header('Content-Type', 'application/json; charset=utf-8');
     res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.header('Pragma', 'no-cache');
+    res.header('Expires', '0');
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', '*');
+    res.header('Access-Control-Allow-Headers', '*');
     res.json(data);
 }
 
@@ -719,6 +744,31 @@ app.get('/meta/:type/:id.json', async (req, res) => {
                             }]
                         }
                     });
+                } else if (anime.isHeader) {
+                    // Speciální handling pro header položku
+                    sendJsonWithCors(res, {
+                        meta: {
+                            id: anime.id,
+                            type: 'series',
+                            name: anime.name,
+                            poster: anime.poster,
+                            background: anime.background,
+                            description: `Zde najdete včerejší anime vydání ze SubsPlease.\n\nDnešní anime se objeví později během dne.`,
+                            releaseInfo: anime.releaseInfo,
+                            year: new Date().getFullYear(),
+                            imdbRating: 0,
+                            genres: ['Anime', 'Archive'],
+                            videos: [{
+                                id: `${anime.id}:1:0`,
+                                title: 'Včerejší vydání',
+                                season: 1,
+                                episode: 0,
+                                released: new Date(Date.now() - 24*60*60*1000),
+                                overview: 'Archiv včerejších anime',
+                                thumbnail: anime.poster
+                            }]
+                        }
+                    });
                 } else {
                     sendJsonWithCors(res, {
                         meta: {
@@ -774,6 +824,13 @@ app.get('/stream/:type/:id.json', async (req, res) => {
                         name: '⏳ Čekáme na vydání',
                         title: 'Dnes ještě nevyšlo žádné anime ze SubsPlease',
                         url: 'https://subsplease.org/schedule/'
+                    });
+                } else if (anime.isHeader) {
+                    // Speciální handling pro header položku
+                    streams.push({
+                        name: '📅 Archiv včerejších anime',
+                        title: 'Podívejte se na včerejší vydání níže',
+                        url: 'https://subsplease.org/'
                     });
                 } else if (!REAL_DEBRID_API_KEY) {
                     streams.push({
