@@ -5,24 +5,28 @@ const cors = require('cors');
 
 const app = express();
 
-// Rozšířené CORS nastavení pro Stremio
+// Úplně otevřené CORS pro maximální kompatibilitu
 app.use(cors({
-    origin: [
-        'https://web.stremio.com',
-        'https://app.strem.io',
-        'https://staging.strem.io',
-        'http://localhost:8080',
-        'http://localhost:3000',
-        'https://stremio-web.netlify.app',
-        '*' // Fallback pro všechny ostatní
-    ],
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    credentials: false
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
+    allowedHeaders: ['*'],
+    credentials: false,
+    optionsSuccessStatus: 200
 }));
 
-// Explicitní OPTIONS handler
-app.options('*', cors());
+// Middleware pro explicitní CORS hlavičky na všech responses
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+    res.header('Access-Control-Allow-Headers', '*');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    next();
+});
 
 app.use(express.json());
 
@@ -389,12 +393,12 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
     }
 }
 
-// Helper funkce pro CORS hlavičky
-function setCorsHeaders(res) {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.header('Content-Type', 'application/json');
+// Helper funkce pro JSON response s CORS
+function sendJsonWithCors(res, data, status = 200) {
+    res.status(status);
+    res.header('Content-Type', 'application/json; charset=utf-8');
+    res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json(data);
 }
 
 // Routes
@@ -513,16 +517,21 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
-// Manifest s explicitními CORS hlavičkami
+// Manifest s robustním error handlingem
 app.get('/manifest.json', (req, res) => {
-    setCorsHeaders(res);
-    res.json(ADDON_CONFIG);
+    try {
+        console.log('📋 Manifest request from:', req.get('User-Agent'));
+        sendJsonWithCors(res, ADDON_CONFIG);
+    } catch (error) {
+        console.error('❌ Manifest error:', error);
+        sendJsonWithCors(res, { error: 'Manifest error' }, 500);
+    }
 });
 
 app.get('/catalog/:type/:id.json', async (req, res) => {
-    setCorsHeaders(res);
-    
     try {
+        console.log('📚 Catalog request:', req.params.id);
+        
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
             
@@ -539,21 +548,20 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
                 releaseInfo: anime.releaseInfo
             }));
 
-            res.json({ metas });
+            sendJsonWithCors(res, { metas });
         } else {
-            res.json({ metas: [] });
+            sendJsonWithCors(res, { metas: [] });
         }
     } catch (error) {
-        res.status(500).json({ 
+        console.error('❌ Catalog error:', error);
+        sendJsonWithCors(res, { 
             metas: [],
             error: 'Chyba při načítání katalogu'
-        });
+        }, 500);
     }
 });
 
 app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
-    setCorsHeaders(res);
-    
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
@@ -571,21 +579,19 @@ app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
                 releaseInfo: anime.releaseInfo
             }));
 
-            res.json({ metas });
+            sendJsonWithCors(res, { metas });
         } else {
-            res.json({ metas: [] });
+            sendJsonWithCors(res, { metas: [] });
         }
     } catch (error) {
-        res.status(500).json({ 
+        sendJsonWithCors(res, { 
             metas: [],
             error: 'Chyba při načítání katalogu'
-        });
+        }, 500);
     }
 });
 
 app.get('/meta/:type/:id.json', async (req, res) => {
-    setCorsHeaders(res);
-    
     try {
         const animeId = req.params.id;
         
@@ -594,7 +600,7 @@ app.get('/meta/:type/:id.json', async (req, res) => {
             const anime = animeList.find(a => a.id === animeId);
             
             if (anime) {
-                res.json({
+                sendJsonWithCors(res, {
                     meta: {
                         id: anime.id,
                         type: 'series',
@@ -618,19 +624,17 @@ app.get('/meta/:type/:id.json', async (req, res) => {
                     }
                 });
             } else {
-                res.status(404).json({ error: 'Anime nenalezeno' });
+                sendJsonWithCors(res, { error: 'Anime nenalezeno' }, 404);
             }
         } else {
-            res.status(404).json({ error: 'Neplatné ID' });
+            sendJsonWithCors(res, { error: 'Neplatné ID' }, 404);
         }
     } catch (error) {
-        res.status(500).json({ error: 'Chyba serveru' });
+        sendJsonWithCors(res, { error: 'Chyba serveru' }, 500);
     }
 });
 
 app.get('/stream/:type/:id.json', async (req, res) => {
-    setCorsHeaders(res);
-    
     try {
         const videoId = req.params.id;
         const parts = videoId.split(':');
@@ -706,23 +710,22 @@ app.get('/stream/:type/:id.json', async (req, res) => {
                     });
                 }
 
-                res.json({ streams });
+                sendJsonWithCors(res, { streams });
             } else {
-                res.json({ streams: [{ name: '❌ Anime nenalezeno', url: 'https://subsplease.org' }] });
+                sendJsonWithCors(res, { streams: [{ name: '❌ Anime nenalezeno', url: 'https://subsplease.org' }] });
             }
         } else {
-            res.json({ streams: [] });
+            sendJsonWithCors(res, { streams: [] });
         }
     } catch (error) {
-        res.status(500).json({ 
+        sendJsonWithCors(res, { 
             streams: [{ name: '❌ Chyba', url: 'https://subsplease.org' }]
-        });
+        }, 500);
     }
 });
 
 app.get('/health', (req, res) => {
-    setCorsHeaders(res);
-    res.json({
+    sendJsonWithCors(res, {
         status: 'ok',
         timestamp: new Date().toISOString(),
         realDebridConfigured: !!REAL_DEBRID_API_KEY,
