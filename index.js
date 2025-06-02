@@ -335,12 +335,21 @@ async function getTodayAnime() {
         
         let animeList = Array.from(animeMap.values());
         
-        // Kontrola, zda máme dnešní anime
+        // Rozdělíme na dnešní a včerejší
         const todayAnime = animeList.filter(anime => anime.isToday);
-        console.log(`📅 Dnešní anime: ${todayAnime.length}, Včerejší: ${animeList.length - todayAnime.length}`);
+        const yesterdayAnime = animeList.filter(anime => anime.isYesterday);
         
-        // Pokud nemáme žádné dnešní anime, přidáme "Waiting" položku
-        if (todayAnime.length === 0) {
+        console.log(`📅 Dnešní anime: ${todayAnime.length}, Včerejší: ${yesterdayAnime.length}`);
+        
+        // Sestavíme finální seznam
+        let finalList = [];
+        
+        // Pokud máme dnešní anime, zobrazíme je
+        if (todayAnime.length > 0) {
+            console.log('✅ Máme dnešní anime, zobrazuji je');
+            finalList = [...todayAnime];
+        } else {
+            // Pokud nemáme dnešní anime, přidáme "Waiting" položku
             console.log('⏳ Žádné dnešní anime, přidávám Waiting položku');
             
             const waitingItem = {
@@ -358,7 +367,11 @@ async function getTodayAnime() {
                 isWaiting: true
             };
             
-            // Přidáme separátor pro včerejší anime
+            finalList.push(waitingItem);
+        }
+        
+        // Přidáme header pro včerejší anime (pokud existují)
+        if (yesterdayAnime.length > 0) {
             const yesterdayHeader = {
                 id: 'subsplease:' + Buffer.from('Yesterday-Header').toString('base64'),
                 name: '📅 Anime ze včera',
@@ -371,12 +384,15 @@ async function getTodayAnime() {
                 pubDate: new Date(Date.now() - 24*60*60*1000).toISOString(),
                 qualities: new Map(),
                 isToday: false,
+                isYesterday: true,
                 isHeader: true
             };
             
-            // Přidáme Waiting na začátek, pak header, pak včerejší anime
-            animeList = [waitingItem, yesterdayHeader, ...animeList];
+            finalList.push(yesterdayHeader);
+            finalList.push(...yesterdayAnime);
         }
+        
+        animeList = finalList;
         
         // Pokud nemáme vůbec žádné anime, vytvoříme demo data
         if (animeList.length === 0) {
@@ -395,7 +411,10 @@ async function getTodayAnime() {
                     qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
                 }
             ];
-        } else {
+        }
+        
+        // Načteme postery postupně s malým zpožděním (kromě speciálních položek)
+        if (animeList.length > 0) {
             // Načteme postery postupně s malým zpožděním (kromě Waiting položky)
             console.log('🖼️ Načítám postery...');
             const animeWithPosters = [];
@@ -598,7 +617,7 @@ app.get('/', (req, res) => {
 
         <div class="install-section">
             <h2>📱 Instalace do Stremio</h2>
-            <div class="url-box">${baseUrl}/manifest.json</div>
+            <div class="url-box">https://${req.get('host')}/manifest.json</div>
             <a href="stremio://${req.get('host')}/manifest.json" class="btn">🚀 Instalovat do Stremio</a>
         </div>
 
