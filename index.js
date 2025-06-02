@@ -5,26 +5,15 @@ const cors = require('cors');
 
 const app = express();
 
-// Úplně otevřené CORS pro maximální kompatibilitu
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS', 'HEAD', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['*'],
-    credentials: false,
-    optionsSuccessStatus: 200,
-    preflightContinue: false
-}));
+// Jednoduchý CORS - vrácení k fungující verzi
+app.use(cors());
 
-// Middleware pro explicitní CORS hlavičky na všech responses
+// Základní CORS middleware
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD, PUT, PATCH, DELETE');
-    res.header('Access-Control-Allow-Headers', '*');
-    res.header('Access-Control-Max-Age', '86400');
-    res.header('X-Content-Type-Options', 'nosniff');
-    res.header('X-Frame-Options', 'SAMEORIGIN');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     
-    // Explicitní odpověď na preflight requests
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
@@ -507,16 +496,10 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
     }
 }
 
-// Helper funkce pro JSON response s maximálním CORS
+// Jednoduchá JSON response funkce
 function sendJsonWithCors(res, data, status = 200) {
     res.status(status);
-    res.header('Content-Type', 'application/json; charset=utf-8');
-    res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.header('Pragma', 'no-cache');
-    res.header('Expires', '0');
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', '*');
-    res.header('Access-Control-Allow-Headers', '*');
+    res.header('Content-Type', 'application/json');
     res.json(data);
 }
 
@@ -629,14 +612,16 @@ app.get('/', (req, res) => {
             • RealDebrid streaming s direct links<br>
             • Podpora pro 1080p a 720p rozlišení<br>
             • Keep-alive systém proti uspávání na Render.com<br>
-            • Rozšířené CORS pro Stremio web kompatibilitu
+            • Rozšířené CORS pro Stremio web kompatibilitu<br>
+            • Waiting položka s přesípacími hodinami<br>
+            • Separátní sekce pro včerejší anime
         </div>
     </div>
 </body>
 </html>`);
 });
 
-// Manifest s robustním error handlingem
+// Manifest - jednoduchý a spolehlivý
 app.get('/manifest.json', (req, res) => {
     try {
         console.log('📋 Manifest request from:', req.get('User-Agent'));
