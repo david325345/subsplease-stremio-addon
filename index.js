@@ -4,7 +4,26 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// Rozšířené CORS nastavení pro Stremio
+app.use(cors({
+    origin: [
+        'https://web.stremio.com',
+        'https://app.strem.io',
+        'https://staging.strem.io',
+        'http://localhost:8080',
+        'http://localhost:3000',
+        'https://stremio-web.netlify.app',
+        '*' // Fallback pro všechny ostatní
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    credentials: false
+}));
+
+// Explicitní OPTIONS handler
+app.options('*', cors());
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
@@ -370,6 +389,14 @@ async function getMagnetLinks(pageUrl, anime, quality = '1080p') {
     }
 }
 
+// Helper funkce pro CORS hlavičky
+function setCorsHeaders(res) {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.header('Content-Type', 'application/json');
+}
+
 // Routes
 app.get('/', (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
@@ -440,6 +467,7 @@ app.get('/', (req, res) => {
             border: 1px solid rgba(0, 255, 127, 0.3);
             text-align: center; font-size: 14px;
         }
+
     </style>
 </head>
 <body>
@@ -468,6 +496,8 @@ app.get('/', (req, res) => {
             <a href="stremio://${req.get('host')}/manifest.json" class="btn">🚀 Instalovat do Stremio</a>
         </div>
 
+
+
         <div class="features">
             <strong>📺 Funkce addonu:</strong><br>
             • Zobrazuje pouze anime vydané DNES<br>
@@ -475,16 +505,23 @@ app.get('/', (req, res) => {
             • Kontrola nových anime každých 14 minut<br>
             • RealDebrid streaming s direct links<br>
             • Podpora pro 1080p a 720p rozlišení<br>
-            • Keep-alive systém proti uspávání na Render.com
+            • Keep-alive systém proti uspávání na Render.com<br>
+            • Rozšířené CORS pro Stremio web kompatibilitu
         </div>
     </div>
 </body>
 </html>`);
 });
 
-app.get('/manifest.json', (req, res) => res.json(ADDON_CONFIG));
+// Manifest s explicitními CORS hlavičkami
+app.get('/manifest.json', (req, res) => {
+    setCorsHeaders(res);
+    res.json(ADDON_CONFIG);
+});
 
 app.get('/catalog/:type/:id.json', async (req, res) => {
+    setCorsHeaders(res);
+    
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
@@ -515,6 +552,8 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
 });
 
 app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
+    setCorsHeaders(res);
+    
     try {
         if (req.params.id === 'subsplease_today') {
             const animeList = await getTodayAnime();
@@ -545,6 +584,8 @@ app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
 });
 
 app.get('/meta/:type/:id.json', async (req, res) => {
+    setCorsHeaders(res);
+    
     try {
         const animeId = req.params.id;
         
@@ -588,6 +629,8 @@ app.get('/meta/:type/:id.json', async (req, res) => {
 });
 
 app.get('/stream/:type/:id.json', async (req, res) => {
+    setCorsHeaders(res);
+    
     try {
         const videoId = req.params.id;
         const parts = videoId.split(':');
@@ -678,13 +721,15 @@ app.get('/stream/:type/:id.json', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+    setCorsHeaders(res);
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
         realDebridConfigured: !!REAL_DEBRID_API_KEY,
         cacheSize: animeCache.data.length,
         cacheAge: Date.now() - animeCache.timestamp,
-        keepAlive: true
+        keepAlive: true,
+        cors: 'enabled'
     });
 });
 
@@ -693,6 +738,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`⏰ Cache interval: 14 minut`);
     console.log(`🏓 Keep-alive ping: každých 10 minut`);
     console.log(`🔑 RealDebrid API klíč:`, REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
+    console.log(`🌐 CORS je nastaven pro Stremio web`);
     
     // Spustíme první ping po 5 minutách od startu
     setTimeout(() => {
