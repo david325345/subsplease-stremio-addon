@@ -253,37 +253,64 @@ async function getTodayAnime() {
     }
     
     try {
+        console.log('📡 Načítám dnešní anime z RSS...');
+        
         const rssUrls = [
             { url: 'https://subsplease.org/rss/?t&r=1080', quality: '1080p' },
             { url: 'https://subsplease.org/rss/?t&r=720', quality: '720p' }
         ];
         
         const animeMap = new Map();
+        let totalProcessed = 0;
         
         for (const rss of rssUrls) {
             try {
+                console.log(`📥 Stahování ${rss.quality}:`, rss.url);
+                
                 const response = await axios.get(rss.url, {
-                    timeout: 10000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+                    timeout: 15000,
+                    headers: { 
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/rss+xml, application/xml, text/xml',
+                        'Accept-Encoding': 'gzip, deflate'
+                    },
+                    responseType: 'text'
                 });
+                
+                console.log(`✅ Response ${rss.quality}: ${response.status}, délka: ${response.data?.length || 0}`);
+                
+                if (!response.data || typeof response.data !== 'string') {
+                    console.log(`⚠️ ${rss.quality}: Neplatná RSS data`);
+                    continue;
+                }
                 
                 const $ = cheerio.load(response.data, { xmlMode: true });
                 
-                $('item').each((index, element) => {
+                const items = $('item');
+                console.log(`📊 ${rss.quality}: Nalezeno ${items.length} položek v RSS`);
+                
+                items.each((index, element) => {
                     const title = $(element).find('title').text().trim();
                     const link = $(element).find('link').text().trim();
                     const pubDate = $(element).find('pubDate').text().trim();
                     
+                    if (!title || !pubDate) return;
+                    
                     const releaseDate = new Date(pubDate);
                     const today = new Date();
-                    const isToday = releaseDate.toDateString() === today.toDateString();
                     
-                    if (isToday) {
+                    // Zkontrolujeme posledních 24 hodin místo jen dnešního dne
+                    const hoursDiff = (today - releaseDate) / (1000 * 60 * 60);
+                    const isRecent = hoursDiff <= 24 && hoursDiff >= 0;
+                    
+                    if (isRecent) {
                         const match = title.match(/\[SubsPlease\]\s*(.+?)\s*-\s*(\d+(?:\.\d+)?)/);
                         if (match) {
                             const animeName = match[1].trim();
                             const episode = match[2];
                             const animeKey = `${animeName}-${episode}`;
+                            
+                            totalProcessed++;
                             
                             if (!animeMap.has(animeKey)) {
                                 animeMap.set(animeKey, {
@@ -298,6 +325,7 @@ async function getTodayAnime() {
                                     pubDate: pubDate,
                                     qualities: new Map()
                                 });
+                                console.log(`🎌 Nové anime: ${animeName} - Episode ${episode}`);
                             }
                             
                             animeMap.get(animeKey).qualities.set(rss.quality, link);
@@ -306,49 +334,82 @@ async function getTodayAnime() {
                 });
                 
             } catch (error) {
-                console.log(`Chyba při načítání ${rss.quality}:`, error.message);
+                console.log(`❌ Chyba při načítání ${rss.quality}:`, error.message);
             }
         }
         
-        const animeList = Array.from(animeMap.values());
-
-        const animeWithPosters = [];
+        console.log(`📈 Celkem zpracováno: ${totalProcessed} položek, unikátních anime: ${animeMap.size}`);
         
-        // Načteme postery postupně s malým zpožděním
-        for (let i = 0; i < animeList.length; i++) {
-            const anime = animeList[i];
+        let animeList = Array.from(animeMap.values());
+        
+        // Pokud nemáme dnešní anime, vytvoříme demo data
+        if (animeList.length === 0) {
+            console.log('⚠️ Žádné dnešní anime nenalezeno, používám demo data');
+            animeList = [
+                {
+                    id: 'subsplease:' + Buffer.from('Demo Anime-1').toString('base64'),
+                    name: 'Demo Anime - Žádné dnešní vydání',
+                    episode: '1',
+                    fullTitle: '[SubsPlease] Demo Anime - 01 (1080p)',
+                    poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Žádné+anime+dnes',
+                    background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
+                    releaseInfo: new Date().toLocaleDateString('cs-CZ'),
+                    type: 'series',
+                    pubDate: new Date().toISOString(),
+                    qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
+                }
+            ];
+        } else {
+            // Načteme postery postupně s malým zpožděním
+            console.log('🖼️ Načítám postery...');
+            const animeWithPosters = [];
             
-            // Malé zpoždění mezi požadavky (200-500ms)
-            if (i > 0) {
-                const delay = Math.random() * 300 + 200;
-                await new Promise(resolve => setTimeout(resolve, delay));
+            for (let i = 0; i < animeList.length; i++) {
+                const anime = animeList[i];
+                
+                // Malé zpoždění mezi požadavky (200-500ms)
+                if (i > 0) {
+                    const delay = Math.random() * 300 + 200;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                
+                const images = await getAnimePoster(anime.name);
+                animeWithPosters.push({
+                    ...anime,
+                    poster: images.poster,
+                    background: images.background
+                });
             }
             
-            const images = await getAnimePoster(anime.name);
-            animeWithPosters.push({
-                ...anime,
-                poster: images.poster,
-                background: images.background
-            });
+            animeList = animeWithPosters;
         }
 
-        animeCache.data = animeWithPosters;
+        animeCache.data = animeList;
         animeCache.timestamp = now;
-        return animeWithPosters;
+        
+        console.log(`✅ Cache aktualizován s ${animeList.length} anime`);
+        return animeList;
         
     } catch (error) {
-        return [{
-            id: 'subsplease:' + Buffer.from('Demo Anime-1').toString('base64'),
-            name: 'Demo Anime',
+        console.log('❌ Globální chyba při načítání anime:', error.message);
+        
+        // Fallback demo data
+        const demoData = [{
+            id: 'subsplease:' + Buffer.from('Error Demo-1').toString('base64'),
+            name: 'Chyba při načítání RSS',
             episode: '1',
-            fullTitle: '[SubsPlease] Demo Anime - 01 (1080p)',
-            poster: 'https://via.placeholder.com/300x400/1a1a2e/ffffff?text=Demo+Anime',
-            background: 'https://via.placeholder.com/1920x1080/1a1a2e/ffffff?text=Demo+Background',
-            releaseInfo: 'Demo',
+            fullTitle: '[SubsPlease] Error Demo - 01 (1080p)',
+            poster: 'https://via.placeholder.com/300x400/dc3545/ffffff?text=RSS+Error',
+            background: 'https://via.placeholder.com/1920x1080/dc3545/ffffff?text=RSS+Error',
+            releaseInfo: 'Error',
             type: 'series',
-            link: 'https://subsplease.org/',
+            pubDate: new Date().toISOString(),
             qualities: new Map([['1080p', 'https://subsplease.org/'], ['720p', 'https://subsplease.org/']])
         }];
+        
+        animeCache.data = demoData;
+        animeCache.timestamp = now;
+        return demoData;
     }
 }
 
