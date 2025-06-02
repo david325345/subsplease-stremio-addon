@@ -307,6 +307,37 @@ async function getTodayAnime() {
                             
                             if (!animeMap.has(animeKey)) {
                                 animeMap.set(animeKey, {
+                                   // NAJDI TENTO BLOK V ŘÁDCÍCH 310-340 a nahraď ho:
+
+                items.each((index, element) => {
+                    const title = $(element).find('title').text().trim();
+                    const link = $(element).find('link').text().trim();
+                    const pubDate = $(element).find('pubDate').text().trim();
+                    
+                    if (!title || !pubDate) return;
+                    
+                    const releaseDate = new Date(pubDate);
+                    const today = new Date();
+                    const yesterday = new Date(today);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    
+                    // Hodinová detekce (spolehlivější než datum)
+                    const hoursAgo = (today - releaseDate) / (1000 * 60 * 60);
+                    const isTodayByHours = hoursAgo >= 0 && hoursAgo < 24;
+                    const isYesterdayByHours = hoursAgo >= 24 && hoursAgo < 48;
+                    
+                    // Bereme jen posledních 48 hodin
+                    if (hoursAgo >= 0 && hoursAgo < 48) {
+                        const match = title.match(/\[SubsPlease\]\s*(.+?)\s*-\s*(\d+(?:\.\d+)?)/);
+                        if (match) {
+                            const animeName = match[1].trim();
+                            const episode = match[2];
+                            const animeKey = `${animeName}-${episode}`;
+                            
+                            totalProcessed++;
+                            
+                            if (!animeMap.has(animeKey)) {
+                                animeMap.set(animeKey, {
                                     id: `subsplease:${Buffer.from(animeKey).toString('base64')}`,
                                     name: animeName,
                                     episode: episode,
@@ -316,28 +347,17 @@ async function getTodayAnime() {
                                     releaseInfo: releaseDate.toLocaleDateString('cs-CZ'),
                                     type: 'series',
                                     pubDate: pubDate,
-                                    qualities: new Map()
+                                    qualities: new Map(),
+                                    isToday: isTodayByHours,
+                                    isYesterday: isYesterdayByHours
                                 });
-                                console.log(`🎌 Nové anime: ${animeName} - Episode ${episode}`);
+                                console.log(`🎌 ${isTodayByHours ? 'DNEŠNÍ' : 'VČEREJŠÍ'} anime: ${animeName} - Episode ${episode} (${hoursAgo.toFixed(1)}h ago)`);
                             }
                             
                             animeMap.get(animeKey).qualities.set(rss.quality, link);
                         }
                     }
                 });
-                
-            } catch (error) {
-                console.log(`❌ Chyba při načítání ${rss.quality}:`, error.message);
-            }
-        }
-        
-        console.log(`📈 Celkem zpracováno: ${totalProcessed} položek, unikátních anime: ${animeMap.size}`);
-        
-        let animeList = Array.from(animeMap.values());
-        
-        // Rozdělíme na dnešní a včerejší
-        const todayAnime = animeList.filter(anime => anime.isToday);
-        const yesterdayAnime = animeList.filter(anime => anime.isYesterday);
         
         console.log(`📅 Dnešní anime: ${todayAnime.length}, Včerejší: ${yesterdayAnime.length}`);
         
