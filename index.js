@@ -322,13 +322,9 @@ async function getTodayAnime() {
             // Uložíme do cache s kratším TTL (5 minut) pro častější aktualizace
             animeCache.data = animeList;
             animeCache.timestamp = now;
-            animeCache.ttl = 5 * 60 * 1000; // 5 minut pro placeholder
             
             return animeList;
         }
-
-        // Obnovíme normální TTL pro skutečná anime
-        animeCache.ttl = 14 * 60 * 1000; // 14 minut
 
         const animeWithPosters = [];
         
@@ -361,7 +357,6 @@ async function getTodayAnime() {
         const fallbackList = [createNoAnimeToday()];
         animeCache.data = fallbackList;
         animeCache.timestamp = now;
-        animeCache.ttl = 5 * 60 * 1000; // Kratší TTL pro chybový stav
         
         return fallbackList;
     }
@@ -516,7 +511,7 @@ app.get('/', (req, res) => {
             • Zobrazuje pouze anime vydané DNES<br>
             • Pokud dnes nic nevyšlo, zobrazí se "Dnes zatím nic nevyšlo" s aktuálním časem<br>
             • Automatické načítání posterů z MyAnimeList API<br>
-            • Kontrola nových anime každých 14 minut (5 minut při žádném obsahu)<br>
+            • Kontrola nových anime každých 14 minut<br>
             • RealDebrid streaming s direct links<br>
             • Podpora pro 1080p a 720p rozlišení<br>
             • Keep-alive systém proti uspávání na Render.com
@@ -540,7 +535,7 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
                 poster: anime.poster,
                 background: anime.background,
                 description: anime.isPlaceholder ? 
-                    `Zatím dnes nevyšlo žádné anime. Kontrola každých 5 minut.` :
+                    `Zatím dnes nevyšlo žádné anime. Kontrola každých 14 minut.` :
                     `Epizoda ${anime.episode} - ${anime.releaseInfo}`,
                 genres: anime.isPlaceholder ? ['Informace'] : ['Anime'],
                 year: new Date().getFullYear(),
@@ -572,7 +567,7 @@ app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
                 poster: anime.poster,
                 background: anime.background,
                 description: anime.isPlaceholder ? 
-                    `Zatím dnes nevyšlo žádné anime. Kontrola každých 5 minut.` :
+                    `Zatím dnes nevyšlo žádné anime. Kontrola každých 14 minut.` :
                     `Epizoda ${anime.episode} - ${anime.releaseInfo}`,
                 genres: anime.isPlaceholder ? ['Informace'] : ['Anime'],
                 year: new Date().getFullYear(),
@@ -595,6 +590,78 @@ app.get('/catalog/:type/:id/:extra.json', async (req, res) => {
 app.get('/meta/:type/:id.json', async (req, res) => {
     try {
         const animeId = req.params.id;
+        
+        if (animeId.startsWith('subsplease:')) {
+            const animeList = await getTodayAnime();
+            const anime = animeList.find(a => a.id === animeId);
+            
+            if (anime) {
+                // Speciální handling pro placeholder
+                if (anime.isPlaceholder) {
+                    res.json({
+                        meta: {
+                            id: anime.id,
+                            type: 'series',
+                            name: anime.name,
+                            poster: anime.poster,
+                            background: anime.background,
+                            description: `Zatím dnes nevyšlo žádné anime ze SubsPlease.\n\nPosledních kontrola: ${anime.releaseInfo}\n\nAddon kontroluje nové releasy každých 14 minut.`,
+                            releaseInfo: anime.releaseInfo,
+                            year: new Date().getFullYear(),
+                            imdbRating: 0,
+                            genres: ['Informace'],
+                            videos: [{
+                                id: `${anime.id}:1:0`,
+                                title: 'Zatím žádný obsah',
+                                season: 1,
+                                episode: 0,
+                                released: new Date(anime.pubDate),
+                                overview: 'Dnes zatím nevyšlo žádné anime',
+                                thumbnail: anime.poster
+                            }]
+                        }
+                    });
+                } else {
+                    res.json({
+                        meta: {
+                            id: anime.id,
+                            type: 'series',
+                            name: anime.name,
+                            poster: anime.poster,
+                            background: anime.background,
+                            description: `${anime.fullTitle}\n\nVydáno: ${anime.releaseInfo}`,
+                            releaseInfo: anime.releaseInfo,
+                            year: new Date().getFullYear(),
+                            imdbRating: 8.0,
+                            genres: ['Anime'],
+                            videos: [{
+                                id: `${anime.id}:1:${anime.episode}`,
+                                title: `Epizoda ${anime.episode}`,
+                                season: 1,
+                                episode: parseInt(anime.episode),
+                                released: anime.pubDate ? new Date(anime.pubDate) : new Date(),
+                                overview: anime.fullTitle,
+                                thumbnail: anime.poster
+                            }]
+                        }
+                    });
+                }
+            } else {
+                res.status(404).json({ error: 'Anime nenalezeno' });
+            }
+        } else {
+            res.status(404).json({ error: 'Neplatné ID' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Chyba serveru' });
+    }
+});
+
+app.get('/stream/:type/:id.json', async (req, res) => {
+    try {
+        const videoId = req.params.id;
+        const parts = videoId.split(':');
+        const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId;
         
         if (animeId.startsWith('subsplease:')) {
             const animeList = await getTodayAnime();
@@ -710,7 +777,7 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SubsPlease Stremio addon běží na portu ${PORT}`);
-    console.log(`⏰ Cache interval: 14 minut (5 minut pro placeholder)`);
+    console.log(`⏰ Cache interval: 14 minut`);
     console.log(`🏓 Keep-alive ping: každých 10 minut`);
     console.log(`🔑 RealDebrid API klíč:`, REAL_DEBRID_API_KEY ? 'NASTAVEN' : 'NENÍ NASTAVEN');
     
@@ -719,76 +786,4 @@ app.listen(PORT, '0.0.0.0', () => {
         console.log(`🏓 Spouštím keep-alive systém...`);
         keepAlive(); // První ping
     }, 5 * 60 * 1000); // 5 minut po startu
-});ciální handling pro placeholder
-                if (anime.isPlaceholder) {
-                    res.json({
-                        meta: {
-                            id: anime.id,
-                            type: 'series',
-                            name: anime.name,
-                            poster: anime.poster,
-                            background: anime.background,
-                            description: `Zatím dnes nevyšlo žádné anime ze SubsPlease.\n\nPosledních kontrola: ${anime.releaseInfo}\n\nAddon kontroluje nové releasy každých 5 minut.`,
-                            releaseInfo: anime.releaseInfo,
-                            year: new Date().getFullYear(),
-                            imdbRating: 0,
-                            genres: ['Informace'],
-                            videos: [{
-                                id: `${anime.id}:1:0`,
-                                title: 'Zatím žádný obsah',
-                                season: 1,
-                                episode: 0,
-                                released: new Date(anime.pubDate),
-                                overview: 'Dnes zatím nevyšlo žádné anime',
-                                thumbnail: anime.poster
-                            }]
-                        }
-                    });
-                } else {
-                    res.json({
-                        meta: {
-                            id: anime.id,
-                            type: 'series',
-                            name: anime.name,
-                            poster: anime.poster,
-                            background: anime.background,
-                            description: `${anime.fullTitle}\n\nVydáno: ${anime.releaseInfo}`,
-                            releaseInfo: anime.releaseInfo,
-                            year: new Date().getFullYear(),
-                            imdbRating: 8.0,
-                            genres: ['Anime'],
-                            videos: [{
-                                id: `${anime.id}:1:${anime.episode}`,
-                                title: `Epizoda ${anime.episode}`,
-                                season: 1,
-                                episode: parseInt(anime.episode),
-                                released: anime.pubDate ? new Date(anime.pubDate) : new Date(),
-                                overview: anime.fullTitle,
-                                thumbnail: anime.poster
-                            }]
-                        }
-                    });
-                }
-            } else {
-                res.status(404).json({ error: 'Anime nenalezeno' });
-            }
-        } else {
-            res.status(404).json({ error: 'Neplatné ID' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: 'Chyba serveru' });
-    }
 });
-
-app.get('/stream/:type/:id.json', async (req, res) => {
-    try {
-        const videoId = req.params.id;
-        const parts = videoId.split(':');
-        const animeId = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : videoId;
-        
-        if (animeId.startsWith('subsplease:')) {
-            const animeList = await getTodayAnime();
-            const anime = animeList.find(a => a.id === animeId);
-            
-            if (anime) {
-                // Spe
